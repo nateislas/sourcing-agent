@@ -1,0 +1,101 @@
+"""
+Core state definitions for the Deep Research Application.
+Defines the shared data structures used by the Orchestrator, Workers, and Activities.
+"""
+
+from typing import List, Dict, Set, Literal
+from pydantic import BaseModel, Field
+
+# --- Core Entity Definitions ---
+
+
+class EvidenceSnippet(BaseModel):
+    """Stores verbatim text evidence with its source and timestamp."""
+
+    source_url: str
+    content: str
+    timestamp: str  # ISO format
+
+
+class Entity(BaseModel):
+    """Represents a discovered entity with its metadata and evidence."""
+
+    canonical_name: str
+    # Raw strings found in text (e.g. "BMS-986158", "Compound 7")
+    aliases: Set[str] = Field(default_factory=set)
+    # Structured data: {"stage": "Phase 1", "indication": "TNBC"}
+    attributes: Dict[str, str] = Field(default_factory=dict)
+    # Verbatim excerpts backing the entity
+    evidence: List[EvidenceSnippet] = Field(default_factory=list)
+    # Count of times extracted
+    mention_count: int = 0
+
+
+# --- Worker State & Metrics ---
+
+
+class WorkerState(BaseModel):
+    """Tracks the state and metrics of an individual search worker."""
+
+    id: str
+    strategy: str  # e.g., "broad_english", "specific_code_name"
+    status: Literal["active", "completed", "failed"] = "active"
+    pages_fetched: int = 0
+    entities_found: int = 0
+    # URLs discovered by this worker to be visited
+    personal_queue: List[str] = Field(default_factory=list)
+
+
+# --- Strategic Planning ---
+
+
+class Gap(BaseModel):
+    """Represents a missing piece of information or coverage gap."""
+
+    description: str
+    priority: Literal["low", "medium", "high"]
+    reasoning: str
+
+
+class ResearchPlan(BaseModel):
+    """Encapsulates the current strategic understanding and next steps."""
+
+    current_hypothesis: str
+    # "What we know so far"
+    findings_summary: str
+    # Identified gaps in coverage
+    gaps: List[Gap] = Field(default_factory=list)
+    # Plan for the next iteration
+    next_steps: List[str] = Field(default_factory=list)
+
+
+# --- Global Orchestrator State ---
+
+
+class ResearchState(BaseModel):
+    """Manages the global state of the research process, including entities and workers."""
+
+    topic: str
+    status: Literal["initialized", "running", "completed", "failed"] = "initialized"
+
+    # Global Knowledge Base
+    # Key: Normalized entity string
+    known_entities: Dict[str, Entity] = Field(default_factory=dict)
+
+    # Global Concurrency Control
+    visited_urls: Set[str] = Field(default_factory=set)
+
+    # Worker Management
+    workers: Dict[str, WorkerState] = Field(default_factory=dict)
+
+    # Strategic Plan (The "Brain")
+    plan: ResearchPlan = Field(
+        default_factory=lambda: ResearchPlan(
+            current_hypothesis="Initial state",
+            findings_summary="None",
+            gaps=[],
+            next_steps=["Initial Analysis"],
+        )
+    )
+
+    logs: List[str] = Field(default_factory=list)
