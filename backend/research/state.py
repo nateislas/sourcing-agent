@@ -3,8 +3,9 @@ Core state definitions for the Deep Research Application.
 Defines the shared data structures used by the Orchestrator, Workers, and Activities.
 """
 
+import os
 import uuid
-from typing import List, Dict, Set, Literal, Any
+from typing import List, Dict, Set, Literal, Any, Optional
 from pydantic import BaseModel, Field
 
 # --- Core Entity Definitions ---
@@ -24,7 +25,10 @@ class Entity(BaseModel):
     canonical_name: str
     # Raw strings found in text (e.g. "BMS-986158", "Compound 7")
     aliases: Set[str] = Field(default_factory=set)
-    # Structured data: {"stage": "Phase 1", "indication": "TNBC"}
+    # Structured data
+    drug_class: Optional[str] = None
+    clinical_phase: Optional[str] = None
+    # Flexible attributes
     attributes: Dict[str, str] = Field(default_factory=dict)
     # Verbatim excerpts backing the entity
     evidence: List[EvidenceSnippet] = Field(default_factory=list)
@@ -39,6 +43,7 @@ class WorkerState(BaseModel):
     """Tracks the state and metrics of an individual search worker."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    research_id: Optional[str] = None
     strategy: str  # e.g., "broad_english", "specific_code_name"
     status: Literal["PRODUCTIVE", "DECLINING", "EXHAUSTED", "DEAD_END", "ACTIVE"] = (
         "ACTIVE"
@@ -66,7 +71,9 @@ class InitialWorkerStrategy(BaseModel):
     strategy: str
     strategy_description: str
     example_queries: List[str]
-    page_budget: int = 50
+    page_budget: int = Field(
+        default_factory=lambda: int(os.getenv("WORKER_PAGE_BUDGET", 50))
+    )
     status: Literal["ACTIVE"] = "ACTIVE"
 
 
@@ -84,7 +91,8 @@ class ResearchPlan(BaseModel):
         default_factory=list, description="Initial spawn configuration"
     )
     budget_reserve_pct: float = Field(
-        default=0.6, description="Percentage of budget to reserve for adaptive phase"
+        default_factory=lambda: float(os.getenv("BUDGET_RESERVE_PCT", 0.6)),
+        description="Percentage of budget to reserve for adaptive phase",
     )
     reasoning: str = Field(
         default="", description="Explanation of the planning strategy"
@@ -103,6 +111,7 @@ class ResearchPlan(BaseModel):
 class ResearchState(BaseModel):
     """Manages the global state of the research process, including entities and workers."""
 
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     topic: str
     status: Literal["initialized", "running", "completed", "failed"] = "initialized"
 

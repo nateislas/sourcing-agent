@@ -10,3 +10,10 @@ protobuf==6.33.4
 google-generativeai==0.21.0
 llama-index-core==0.6.2
 llama-index-llms-google-genai==0.6.2
+# Search & Extraction
+perplexityai
+tavily-python
+llama-cloud>=1.1.0
+trafilatura
+beautifulsoup4
+pillow
