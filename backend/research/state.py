@@ -3,7 +3,7 @@ Core state definitions for the Deep Research Application.
 Defines the shared data structures used by the Orchestrator, Workers, and Activities.
 """
 
-from typing import List, Dict, Set, Literal
+from typing import List, Dict, Set, Literal, Any
 from pydantic import BaseModel, Field
 
 # --- Core Entity Definitions ---
@@ -57,15 +57,38 @@ class Gap(BaseModel):
     reasoning: str
 
 
+class InitialWorkerStrategy(BaseModel):
+    worker_id: str
+    strategy: str
+    strategy_description: str
+    example_queries: List[str]
+    page_budget: int = 50
+
+
 class ResearchPlan(BaseModel):
     """Encapsulates the current strategic understanding and next steps."""
 
-    current_hypothesis: str
-    # "What we know so far"
-    findings_summary: str
-    # Identified gaps in coverage
+    # New fields for Expert Planning
+    query_analysis: Dict[str, Any] = Field(
+        default_factory=dict, description="Structured analysis of the user query"
+    )
+    synonyms: Dict[str, List[str]] = Field(
+        default_factory=dict, description="Generated synonyms for targets/indications"
+    )
+    initial_workers: List[InitialWorkerStrategy] = Field(
+        default_factory=list, description="Initial spawn configuration"
+    )
+    budget_reserve_pct: float = Field(
+        default=0.6, description="Percentage of budget to reserve for adaptive phase"
+    )
+    reasoning: str = Field(
+        default="", description="Explanation of the planning strategy"
+    )
+
+    # Legacy/Computed fields used by Orchestrator
+    current_hypothesis: str = "Plan Generated"
+    findings_summary: str = "Initial Planning Complete"
     gaps: List[Gap] = Field(default_factory=list)
-    # Plan for the next iteration
     next_steps: List[str] = Field(default_factory=list)
 
 

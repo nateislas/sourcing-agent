@@ -38,10 +38,13 @@ class DeepResearchOrchestrator:
             activities.save_state, state, start_to_close_timeout=timedelta(seconds=5)
         )
 
-        # 2. Initial Planning (Stub)
-        # In a real impl, this would call an LLM to analyze the query
-        state.plan.current_hypothesis = f"Exploring {topic}"
-        state.plan.next_steps = ["broad_search"]
+        # 2. Initial Planning
+        state.plan = await workflow.execute_activity(
+            activities.generate_initial_plan,
+            topic,
+            start_to_close_timeout=timedelta(seconds=60),
+        )
+        state.logs.append(f"Plan generated: {state.plan.current_hypothesis}")
 
         # 3. Execution Loop (Limit to 1 iteration for now)
         iteration = 0

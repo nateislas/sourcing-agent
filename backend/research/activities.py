@@ -4,12 +4,22 @@ Handles external interactions like searching and fetching content.
 """
 
 from temporalio import activity
-from backend.research.state import ResearchState, Entity
 from backend.db.connection import AsyncSessionLocal
 from backend.db.repository import ResearchRepository
+from backend.research.agent import ResearchAgent
+from backend.research.state import ResearchState, Entity, ResearchPlan
 
 
 @activity.defn
+async def generate_initial_plan(topic: str) -> ResearchPlan:
+    """
+    Generates the initial research plan using the Research Agent.
+    """
+    activity.logger.info(f"Generating initial plan for: {topic}")
+    agent = ResearchAgent()
+    return await agent.generate_initial_plan(topic)
+
+
 async def search(query: str) -> list[str]:
     """
     Performs a broad search for the given query.
