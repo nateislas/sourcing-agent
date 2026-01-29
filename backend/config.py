@@ -1,3 +1,8 @@
+"""
+Configuration settings for the Deep Research Application.
+Loads environment variables and defines constants for Temporal and task queues.
+"""
+
 import os
 from dotenv import load_dotenv
 

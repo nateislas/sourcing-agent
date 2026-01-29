@@ -5,20 +5,32 @@ Handles conversion between Domain Models (Pydantic) and Persistence Models (SQLA
 
 from typing import Optional
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models import ResearchSessionHelper, EntityModel, EvidenceModel
-from backend.state import ResearchState, Entity
+from backend.db.models import ResearchSessionHelper, EntityModel, EvidenceModel
+from backend.research.state import ResearchState, Entity, EvidenceSnippet
 
 
 class ResearchRepository:
     """Repository for managing ResearchState persistence."""
 
     def __init__(self, session: AsyncSession):
+        """
+        Initializes the repository with a database session.
+        Args:
+            session: The asynchronous database session.
+        """
         self.session = session
 
     async def get_session(self, topic: str) -> Optional[ResearchState]:
-        """Load a ResearchState from the DB."""
+        """
+        Loads a ResearchState from the database for a specific topic.
+        Args:
+            topic: The topic identifier for the session.
+        Returns:
+            The loaded ResearchState or None if not found.
+        """
         stmt = select(ResearchSessionHelper).where(ResearchSessionHelper.topic == topic)
         result = await self.session.execute(stmt)
         db_obj = result.scalar_one_or_none()
@@ -32,7 +44,11 @@ class ResearchRepository:
         return ResearchState(topic=db_obj.topic, status=db_obj.status, logs=db_obj.logs)
 
     async def create_session(self, state: ResearchState):
-        """Create a new session record."""
+        """
+        Creates a new research session record in the database.
+        Args:
+            state: The initial ResearchState to persist.
+        """
         db_obj = ResearchSessionHelper(
             topic=state.topic, status=state.status, logs=state.logs
         )
@@ -40,7 +56,12 @@ class ResearchRepository:
         await self.session.commit()
 
     async def save_entity(self, entity: Entity):
-        """Persist a discovered entity."""
+        """
+        Persists a discovered entity and its associated evidence.
+        Updates existing entities if found by canonical name.
+        Args:
+            entity: The Entity domain model to save.
+        """
         # Check if exists
         stmt = select(EntityModel).where(
             EntityModel.canonical_name == entity.canonical_name
@@ -78,20 +99,37 @@ class ResearchRepository:
         await self.session.commit()
 
     async def get_entity(self, canonical_name: str) -> Optional[Entity]:
-        """Retrieve an entity by name."""
-        stmt = select(EntityModel).where(EntityModel.canonical_name == canonical_name)
+        """
+        Retrieves a hydrated Entity by its canonical name.
+        Args:
+            canonical_name: The name of the entity to retrieve.
+        Returns:
+            The Entity domain model or None if not found.
+        """
+        stmt = (
+            select(EntityModel)
+            .options(selectinload(EntityModel.evidence))
+            .where(EntityModel.canonical_name == canonical_name)
+        )
         result = await self.session.execute(stmt)
         db_obj = result.scalar_one_or_none()
 
         if not db_obj:
             return None
 
-        # Hydrate Pydantic model
-        # Needs explicit loading of evidence relationship in real app (selectinload)
+        # Hydrate EvidenceSnippets
+        evidence = [
+            EvidenceSnippet(
+                source_url=ev.source_url, content=ev.content, timestamp=ev.timestamp
+            )
+            for ev in db_obj.evidence
+        ]
+
+        # Hydrate Entity Pydantic model
         return Entity(
             canonical_name=db_obj.canonical_name,
             aliases=set(db_obj.aliases),
             attributes=db_obj.attributes,
             mention_count=db_obj.mention_count,
-            evidence=[],  # Populate from relation if loaded
+            evidence=evidence,
         )

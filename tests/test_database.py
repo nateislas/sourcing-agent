@@ -4,32 +4,40 @@ Uses SQLite by default for testing without external dependencies.
 """
 
 import asyncio
-import os
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.pool import StaticPool
 
-from backend.database import Base
-from backend.models import EntityModel, EvidenceModel
-from backend.storage import ResearchRepository
-from backend.state import Entity, EvidenceSnippet, ResearchState
+from backend.db.connection import Base
+from backend.db.repository import ResearchRepository
+from backend.research.state import Entity, EvidenceSnippet, ResearchState
 
 # Use in-memory SQLite for testing
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
 
 async def main():
+    """
+    Main test execution loop. Sets up an in-memory database and tests the Repository.
+    """
     print("Setting up test database...")
-    engine = create_async_engine(TEST_DB_URL, echo=False)
+    # Use StaticPool and check_same_thread=False for stable in-memory SQLite testing
+    engine = create_async_engine(
+        TEST_DB_URL,
+        echo=False,
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
 
     # Create tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
     # Session factory
-    AsyncSessionLocal = async_sessionmaker(
+    session_factory = async_sessionmaker(
         bind=engine, class_=AsyncSession, expire_on_commit=False
     )
 
-    async with AsyncSessionLocal() as session:
+    async with session_factory() as session:
         repo = ResearchRepository(session)
 
         # 1. Test Session Creation

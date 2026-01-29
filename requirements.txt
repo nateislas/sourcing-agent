@@ -1,7 +1,9 @@
-temporalio
-streamlit
-pydantic
-python-dotenv
-sqlalchemy[asyncio]
-asyncpg
-aiosqlite
+aiosqlite==0.22.1
+asyncpg==0.31.0
+pydantic==2.12.5
+python-dotenv==1.2.1
+SQLAlchemy==2.0.46
+streamlit==1.50.0
+temporalio==1.18.2
+# protobuf pinned to reflect mitigation strategy for GHSA-7gcm-g887-7qv7
+protobuf==6.33.4

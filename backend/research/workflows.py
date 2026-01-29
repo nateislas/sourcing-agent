@@ -1,15 +1,31 @@
+"""
+Main workflow orchestration logic for Deep Research.
+Implements the iterative plan-guided discovery framework.
+"""
+
 from datetime import timedelta
 from temporalio import workflow
-from backend.state import ResearchState, ResearchPlan
+from backend.research.state import ResearchState, ResearchPlan
 
 with workflow.unsafe.imports_passed_through():
-    from backend import activities
+    from backend.research import activities
 
 
 @workflow.defn
 class DeepResearchOrchestrator:
+    """
+    The central workflow that orchestrates the research process.
+    """
+
     @workflow.run
     async def run(self, topic: str) -> ResearchState:
+        """
+        Executes the main research loop for a given topic.
+        Args:
+            topic: The research subject.
+        Returns:
+            The final ResearchState containing discovered entities.
+        """
         workflow.logger.info(f"Starting research on: {topic}")
 
         # 1. Initialize State

@@ -1,13 +1,21 @@
+"""
+Entry point for starting the Temporal Worker.
+Registers the workflows and activities and connects to the Temporal cluster.
+"""
+
 import asyncio
+import os
 from temporalio.client import Client, TLSConfig
 from temporalio.worker import Worker
 from backend.config import TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE, TASK_QUEUE
-from backend.workflows import DeepResearchOrchestrator
-from backend.activities import search, fetch_page, extract_entities
-import os
+from backend.research.workflows import DeepResearchOrchestrator
+from backend.research.activities import search, fetch_page, extract_entities
 
 
 async def main():
+    """
+    Connects to Temporal and starts the worker process.
+    """
     # Load client cert/key if available for mTLS (Cloud)
     # For now assuming API Key or simple connection based on previous context
     # Adjust TLS config based on environment

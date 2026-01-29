@@ -7,7 +7,7 @@ from typing import List
 from datetime import datetime
 from sqlalchemy import String, Integer, ForeignKey, JSON, Text, DateTime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from backend.database import Base
+from backend.db.connection import Base
 
 
 class ResearchSessionHelper(Base):
