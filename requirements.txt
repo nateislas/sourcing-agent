@@ -1,0 +1,7 @@
+temporalio
+streamlit
+pydantic
+python-dotenv
+sqlalchemy[asyncio]
+asyncpg
+aiosqlite
