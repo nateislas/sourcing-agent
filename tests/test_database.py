@@ -42,13 +42,23 @@ async def main():
 
         # 1. Test Session Creation
         print("Testing Session Persistence...")
-        state = ResearchState(topic="Verification Check", status="running")
-        await repo.create_session(state)
+        state = ResearchState(
+            topic="Verification Check",
+            status="running",
+            visited_urls={"http://test.com"},
+            logs=["initial log"],
+        )
+        state.plan.current_hypothesis = "Test Hypothesis"
+
+        await repo.save_session(state)
 
         saved_state = await repo.get_session("Verification Check")
         assert saved_state is not None
         assert saved_state.topic == "Verification Check"
-        print("✅ Session persistence verified")
+        assert "http://test.com" in saved_state.visited_urls
+        assert saved_state.plan.current_hypothesis == "Test Hypothesis"
+        assert "initial log" in saved_state.logs
+        print("✅ Session persistence verified (including deep state)")
 
         # 2. Test Entity and Evidence Persistence
         print("Testing Entity Persistence...")

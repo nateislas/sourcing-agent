@@ -38,21 +38,38 @@ class ResearchRepository:
         if not db_obj:
             return None
 
-        # Reconstruct Pydantic model
-        # Note: In a real app we'd need to serialize/deserialize the 'plan' and 'workers'
-        # which are currently not fully modeled in the DB schema for simplicity.
+        # Reconstruct Pydantic model from state_dump
+        if db_obj.state_dump:
+            return ResearchState.model_validate(db_obj.state_dump)
+
+        # Fallback for old records without state_dump
         return ResearchState(topic=db_obj.topic, status=db_obj.status, logs=db_obj.logs)
 
-    async def create_session(self, state: ResearchState):
+    async def save_session(self, state: ResearchState):
         """
-        Creates a new research session record in the database.
+        Persists a research session record. Upserts if topic already exists.
         Args:
-            state: The initial ResearchState to persist.
+            state: The ResearchState to persist.
         """
-        db_obj = ResearchSessionHelper(
-            topic=state.topic, status=state.status, logs=state.logs
+        stmt = select(ResearchSessionHelper).where(
+            ResearchSessionHelper.topic == state.topic
         )
-        self.session.add(db_obj)
+        result = await self.session.execute(stmt)
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            existing.status = state.status
+            existing.logs = state.logs
+            existing.state_dump = state.model_dump(mode="json")
+        else:
+            db_obj = ResearchSessionHelper(
+                topic=state.topic,
+                status=state.status,
+                logs=state.logs,
+                state_dump=state.model_dump(mode="json"),
+            )
+            self.session.add(db_obj)
+
         await self.session.commit()
 
     async def save_entity(self, entity: Entity):
