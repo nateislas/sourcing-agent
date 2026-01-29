@@ -21,6 +21,8 @@ class ResearchSessionHelper(Base):
     topic: Mapped[str] = mapped_column(String, primary_key=True)
     status: Mapped[str] = mapped_column(String, default="initialized")
     logs: Mapped[List[str]] = mapped_column(JSON, default=list)
+    # Serialized version of the full ResearchState Pydantic model
+    state_dump: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
