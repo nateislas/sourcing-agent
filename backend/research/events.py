@@ -3,6 +3,7 @@ Events for the Deep Research Orchestrator workflow.
 Defines the communication messages between workflow steps.
 """
 
+from typing import List
 from llama_index.core.workflow import Event
 from backend.research.state import ResearchPlan, WorkerState
 
@@ -31,6 +32,7 @@ class WorkerResultEvent(Event):
     new_entities: int  # Novel entities not previously known
     novelty_rate: float  # new_entities / total_pages_this_iteration
     status: str  # Classification: PRODUCTIVE, DECLINING, EXHAUSTED, DEAD_END
+    extracted_data: List[dict] = []  # List of found entities/aliases
 
 
 class IterationCompleteEvent(Event):

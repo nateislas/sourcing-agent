@@ -13,6 +13,7 @@ from llama_index.core.workflow import (
 # ResearchPlan now contains InitialWorkerStrategy
 from backend.research.state import ResearchPlan, InitialWorkerStrategy
 from backend.research.llm import get_llm
+from backend.research.logging_utils import get_session_logger, log_api_call
 
 
 class InitialPlanningWorkflow(Workflow):
@@ -26,9 +27,12 @@ class InitialPlanningWorkflow(Workflow):
         model_name: str = "models/gemini-3-flash-preview",
         timeout: int = 60,
         verbose: bool = False,
+        research_id: str = None,
     ):
         super().__init__(timeout=timeout, verbose=verbose)
         self.llm = get_llm(model_name)
+        self.research_id = research_id
+        self.logger = get_session_logger(research_id) if research_id else None
 
     @step
     async def generate_comprehensive_plan(self, ev: StartEvent) -> StopEvent:
@@ -47,6 +51,15 @@ class InitialPlanningWorkflow(Workflow):
 
         # Call LLM
         response = await self.llm.acomplete(prompt_str)
+
+        if self.logger:
+            log_api_call(
+                self.logger,
+                "gemini",
+                "planning",
+                {"topic": topic, "prompt": prompt_str},
+                response.text,
+            )
 
         try:
             # Parse JSON
@@ -78,7 +91,9 @@ class InitialPlanningWorkflow(Workflow):
 
         except Exception as e:
             # Fallback Plan
-            print(f"Planning failed: {e}")
+            if self.logger:
+                self.logger.error(f"Planning failed: {e}")
+
             fallback_worker = InitialWorkerStrategy(
                 worker_id="worker_1",
                 strategy="broad_fallback",

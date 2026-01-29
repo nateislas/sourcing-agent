@@ -3,6 +3,7 @@ Temporal activities for the Deep Research Application.
 Handles external interactions like searching and fetching content.
 """
 
+from typing import List, Optional, Any
 from temporalio import activity
 from backend.db.connection import AsyncSessionLocal
 from backend.db.repository import ResearchRepository
@@ -11,13 +12,15 @@ from backend.research.state import ResearchState, ResearchPlan, WorkerState
 
 
 @activity.defn
-async def generate_initial_plan(topic: str) -> ResearchPlan:
+async def generate_initial_plan(
+    topic: str, research_id: Optional[str] = None
+) -> ResearchPlan:
     """
     Generates the initial research plan using the Research Agent.
     """
     activity.logger.info(f"Generating initial plan for: {topic}")
     agent = ResearchAgent()
-    return await agent.generate_initial_plan(topic)
+    return await agent.generate_initial_plan(topic, research_id=research_id)
 
 
 @activity.defn
@@ -30,27 +33,67 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
         f"Worker {worker_state.id} executing iteration with strategy {worker_state.strategy}"
     )
 
-    # Stub implementation suitable for Orchestrator testing
-    # In reality, this would contain the complex inner loop
+    from backend.research.client_search import (
+        PerplexitySearchClient,
+        TavilySearchClient,
+    )
+    from backend.research.extraction import EntityExtractor
 
-    import random
-    import asyncio
+    # Initialize clients
+    perp_client = PerplexitySearchClient(research_id=worker_state.research_id)
+    tav_client = TavilySearchClient(research_id=worker_state.research_id)
+    entity_extractor = EntityExtractor(research_id=worker_state.research_id)
 
-    # Simulate work
-    await asyncio.sleep(1)
+    try:
+        # Metrics for this iteration
+        pages_fetched = 0
+        new_entities_found = []
 
-    new_entities_count = random.randint(0, 5)
-    pages = 10
-    novelty_rate = new_entities_count / pages
+        # 1. Search Phase
+        # We use Perplexity for broad discovery
+        search_results = await perp_client.search(worker_state.strategy, max_results=5)
 
-    return {
-        "worker_id": worker_state.id,
-        "pages_fetched": pages,
-        "entities_found": new_entities_count + 2,  # Total mentions
-        "new_entities": new_entities_count,
-        "novelty_rate": novelty_rate,
-        "status": "PRODUCTIVE" if novelty_rate > 0.05 else "DECLINING",
-    }
+        # 2. Fetch & Extract Phase
+        for result in search_results:
+            activity.logger.info(
+                f"Worker {worker_state.id} processing URL: {result.url}"
+            )
+
+            # For each URL, we try to get high-fidelity markdown via Tavily Extract
+            try:
+                tav_res = await tav_client.search(
+                    result.url, max_results=1, include_raw_content=True
+                )
+                if tav_res:
+                    content = tav_res[0].raw_content or result.snippet
+                else:
+                    content = result.snippet
+            except Exception as e:
+                activity.logger.warning(
+                    f"Tavily extraction failed for {result.url}: {e}"
+                )
+                content = result.snippet
+
+            pages_fetched += 1
+
+            # Extract entities
+            extracted = await entity_extractor.extract_entities(content, result.url)
+            for entry in extracted:
+                new_entities_found.append(entry)
+
+        novelty_rate = len(new_entities_found) / max(pages_fetched, 1)
+
+        return {
+            "worker_id": worker_state.id,
+            "pages_fetched": pages_fetched,
+            "entities_found": len(new_entities_found) + 2,  # total mentions placeholder
+            "new_entities": len(new_entities_found),
+            "novelty_rate": novelty_rate,
+            "status": "PRODUCTIVE" if novelty_rate > 0.1 else "DECLINING",
+            "extracted_data": new_entities_found,  # For orchestrator to merge into state
+        }
+    finally:
+        await entity_extractor.close()
 
 
 @activity.defn

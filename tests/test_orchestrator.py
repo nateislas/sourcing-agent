@@ -90,8 +90,8 @@ async def test_deep_research_workflow_structure():
         # Verify call counts
         assert mock_plan.called
         assert (
-            mock_exec.call_count == 5
-        )  # Should run 5 iterations based on our hardcoded stop in orchestrator.py
+            mock_exec.call_count == 4
+        )  # Iteration 4 finishes with EXHAUSTED, dispatch sees it and stops
 
         # Verify state updates
         worker_state = result.workers["test_worker_1"]

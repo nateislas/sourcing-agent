@@ -3,7 +3,9 @@ Research Agent (The "Brain").
 Handles the intelligent planning and decision making logic using LLMs.
 """
 
+import os
 import logging
+from typing import Optional
 
 from backend.research.state import ResearchPlan
 from backend.research.workflow_planning import InitialPlanningWorkflow
@@ -18,21 +20,33 @@ class ResearchAgent:
     """
 
     def __init__(
-        self, model_name: str = "models/gemini-3-flash-preview", timeout: int = 60
+        self,
+        model_name: Optional[str] = None,
+        timeout: Optional[int] = None,
     ):
-        # Initial planning workflow
-        self.planning_workflow = InitialPlanningWorkflow(
-            model_name=model_name, timeout=timeout, verbose=True
+        self.model_name = model_name or os.getenv(
+            "RESEARCH_MODEL", "models/gemini-3-flash-preview"
         )
+        self.timeout = timeout or int(os.getenv("RESEARCH_TIMEOUT", 60))
 
-    async def generate_initial_plan(self, topic: str) -> ResearchPlan:
+    async def generate_initial_plan(
+        self, topic: str, research_id: Optional[str] = None
+    ) -> ResearchPlan:
         """
         Generates the initial research plan using the planning workflow.
         """
         logger.info(f"Generating initial plan for topic: {topic}")
 
+        # Setup workflow with research_id for logging
+        planning_workflow = InitialPlanningWorkflow(
+            model_name=self.model_name,
+            timeout=self.timeout,
+            verbose=True,
+            research_id=research_id,
+        )
+
         try:
-            handler = self.planning_workflow.run(topic=topic)
+            handler = planning_workflow.run(topic=topic)
             result = await handler
 
             if isinstance(result, ResearchPlan):
