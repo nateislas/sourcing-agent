@@ -2,7 +2,7 @@ import os
 from typing import List, Optional
 from bs4 import BeautifulSoup
 from trafilatura import extract as trafilatura_extract
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from llama_cloud import AsyncLlamaCloud
 from backend.research.state import EvidenceSnippet
 from backend.research.logging_utils import get_session_logger, log_api_call
@@ -14,7 +14,7 @@ class DrugExtractionSchema(BaseModel):
     canonical_name: str = Field(
         description="The primary name of the drug or compound (e.g. Relatlimab)"
     )
-    aliases: List[str] = Field(
+    aliases: Optional[List[str]] = Field(
         description="Other names, code names, or former names (e.g. BMS-986016)",
         default_factory=list,
     )
@@ -26,9 +26,16 @@ class DrugExtractionSchema(BaseModel):
         description="The current clinical trial phase (e.g. Phase 2, Phase 3)",
         default=None,
     )
-    trial_ids: List[str] = Field(
+    trial_ids: Optional[List[str]] = Field(
         description="NCT identifiers for associated trials", default_factory=list
     )
+
+    @field_validator("aliases", "trial_ids", mode="before")
+    @classmethod
+    def ensure_list(cls, v):
+        if v is None:
+            return []
+        return v
 
 
 class WebExtractor:

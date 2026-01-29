@@ -9,7 +9,7 @@ You are a biomedical entity discovery planner. Your goal is to analyze the user'
 **System Rationale (Why acts this way):**
 *   **Forced Diversity:** We spawn multiple workers with *non-overlapping* strategies to prevent "echo chambers" where everyone searches the same terms.
 *   **Late Binding:** We generate synonyms *now* (Discovery Phase) to maximize recall, but verify constraints *later* (Verification Phase) to maximize precision.
-*   **Echo Chambers:** If all workers use the same top-level synonyms, we waste budget on duplicate results. Divergent strategies (e.g., one checking conferences, one checking Chinese patents) yield higher novelty.
+*   **Echo Chambers:** If all workers use the same top-level synonyms, we waste budget on duplicate results. Divergent strategies (e.g., one checking conferences, one checking regional patents) yield higher novelty.
 
 Query: {query}
 
@@ -21,7 +21,7 @@ Perform the following analysis:
    - Constraints that must be satisfied:
      * Hard constraints: MUST match (e.g., "CDK12 target")
      * Soft constraints: Prefer but not required (e.g., "preclinical stage")
-     * Geographic constraints: Specific country/region (e.g., "China", "Japan")
+     * Geographic constraints: Specific country/region (e.g., "Japan", "Germany")
      * Semantic constraints: Entity categories to find (e.g., "small molecules", "biologics")
    - Modality if specified: small molecule, biologic, antibody, ADC, etc.
    - Development stage if specified: preclinical, Phase 1/2/3, IND-enabling, approved, discontinued
@@ -46,7 +46,7 @@ Perform the following analysis:
    **Cross-lingual variants (if geographic constraint present):**
    - Translate target and indication to target language
    - Include transliterations and romanizations
-   Example: If query mentions China/Chinese → generate Chinese translations
+   Example: If query mentions a non-English speaking region → generate translations in that language
 
    **Chemical variants (if applicable for small molecules):**
    - Salt forms (e.g., "hydrochloride", "mesylate")
@@ -111,11 +111,11 @@ Output as JSON matching this schema:
     }},
     {{
       "worker_id": "worker_2",
-      "strategy": "chinese_geographic_search",
-      "strategy_description": "Search using Chinese translations for geographic constraint",
+      "strategy": "regional_language_search",
+      "strategy_description": "Search using target language translations for geographic constraint",
       "example_queries": [
-        "CDK12 抑制剂 中国",
-        "细胞周期蛋白依赖性激酶12 抑制剂"
+        "CDK12 inhibitor [country/region]",
+        "[translated target] [translated indication]"
       ],
       "page_budget": 50
     }}

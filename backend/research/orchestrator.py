@@ -62,6 +62,7 @@ class DeepResearchWorkflow(Workflow):
                 id=worker_cfg.worker_id,
                 research_id=state.id,
                 strategy=worker_cfg.strategy,
+                queries=worker_cfg.example_queries,  # Pass actual queries
                 status="ACTIVE",
             )
             state.workers[w_state.id] = w_state

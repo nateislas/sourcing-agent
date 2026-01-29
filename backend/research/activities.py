@@ -51,7 +51,11 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
 
         # 1. Search Phase
         # We use Perplexity for broad discovery
-        search_results = await perp_client.search(worker_state.strategy, max_results=5)
+        # Use the first query from the worker's query list
+        query = (
+            worker_state.queries[0] if worker_state.queries else worker_state.strategy
+        )
+        search_results = await perp_client.search(query, max_results=5)
 
         # 2. Fetch & Extract Phase
         for result in search_results:

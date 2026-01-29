@@ -45,6 +45,7 @@ class WorkerState(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     research_id: Optional[str] = None
     strategy: str  # e.g., "broad_english", "specific_code_name"
+    queries: List[str] = Field(default_factory=list)  # Actual search queries
     status: Literal["PRODUCTIVE", "DECLINING", "EXHAUSTED", "DEAD_END", "ACTIVE"] = (
         "ACTIVE"
     )
