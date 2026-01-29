@@ -5,12 +5,13 @@ Implements the iterative plan-guided discovery framework.
 
 from datetime import timedelta
 from temporalio import workflow
-from backend.research.state import ResearchState, ResearchPlan
+from backend.research.state import ResearchState
 
 with workflow.unsafe.imports_passed_through():
     from backend.research import activities
 
 
+# pylint: disable=too-few-public-methods,no-member
 @workflow.defn
 class DeepResearchOrchestrator:
     """
@@ -31,6 +32,11 @@ class DeepResearchOrchestrator:
         # 1. Initialize State
         state = ResearchState(topic=topic, status="running")
         state.logs.append("Workflow initialized.")
+
+        # Initial Save
+        await workflow.execute_activity(
+            activities.save_state, state, start_to_close_timeout=timedelta(seconds=5)
+        )
 
         # 2. Initial Planning (Stub)
         # In a real impl, this would call an LLM to analyze the query
@@ -57,5 +63,15 @@ class DeepResearchOrchestrator:
             # Stub: Simply logging completion
             iteration += 1
 
+            # Save State after iteration
+            await workflow.execute_activity(
+                activities.save_state,
+                state,
+                start_to_close_timeout=timedelta(seconds=5),
+            )
+
         state.status = "completed"
+        await workflow.execute_activity(
+            activities.save_state, state, start_to_close_timeout=timedelta(seconds=5)
+        )
         return state

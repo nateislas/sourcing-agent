@@ -11,10 +11,9 @@ from sqlalchemy.orm import DeclarativeBase
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./test.db")
 
 
+# pylint: disable=too-few-public-methods
 class Base(DeclarativeBase):
     """Base class for SQLAlchemy models."""
-
-    pass
 
 
 engine = create_async_engine(DATABASE_URL, echo=False)

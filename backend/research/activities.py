@@ -4,7 +4,9 @@ Handles external interactions like searching and fetching content.
 """
 
 from temporalio import activity
-from backend.research.state import ResearchState
+from backend.research.state import ResearchState, Entity
+from backend.db.connection import AsyncSessionLocal
+from backend.db.repository import ResearchRepository
 
 
 @activity.defn
@@ -34,13 +36,43 @@ async def fetch_page(url: str) -> str:
 
 
 @activity.defn
-async def extract_entities(content: str) -> list[dict]:
+async def extract_entities(_content: str) -> list[dict]:
     """
-    Extracts structured entities from raw content.
+    Extracts structured entities from raw content and persists them.
     Args:
-        content: The text content to analyze.
+        _content: The text content to analyze.
     Returns:
         A list of extracted entity dictionaries.
     """
-    activity.logger.info(f"Extracting from content")
-    return [{"name": "Example Entity", "type": "Test"}]
+    activity.logger.info("Extracting from content")
+    # Stub extraction result
+    extracted = [{"name": "Example Entity", "type": "Test"}]
+
+    # Persist to DB
+    async with AsyncSessionLocal() as session:
+        repo = ResearchRepository(session)
+        for ent_data in extracted:
+            entity = Entity(
+                canonical_name=ent_data["name"],
+                attributes={"type": ent_data["type"]},
+                mention_count=1,
+            )
+            await repo.save_entity(entity)
+
+    return extracted
+
+
+@activity.defn
+async def save_state(state: ResearchState) -> bool:
+    """
+    Persists the current global research state.
+    Args:
+        state: The ResearchState to save.
+    Returns:
+        True if successful.
+    """
+    activity.logger.info(f"Saving state for topic: {state.topic}")
+    async with AsyncSessionLocal() as session:
+        repo = ResearchRepository(session)
+        await repo.save_session(state)
+    return True

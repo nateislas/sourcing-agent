@@ -3,6 +3,8 @@ SQLAlchemy models for the Deep Research Application.
 Define the database schema for persisting research state.
 """
 
+# pylint: disable=unsubscriptable-object,too-few-public-methods
+
 from typing import List
 from datetime import datetime
 from sqlalchemy import String, Integer, ForeignKey, JSON, Text, DateTime

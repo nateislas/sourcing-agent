@@ -43,7 +43,7 @@ async def main():
         # 1. Test Session Creation
         print("Testing Session Persistence...")
         state = ResearchState(topic="Verification Check", status="running")
-        await repo.create_session(state)
+        await repo.save_session(state)
 
         saved_state = await repo.get_session("Verification Check")
         assert saved_state is not None
