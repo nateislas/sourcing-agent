@@ -3,6 +3,7 @@ Core state definitions for the Deep Research Application.
 Defines the shared data structures used by the Orchestrator, Workers, and Activities.
 """
 
+import uuid
 from typing import List, Dict, Set, Literal, Any
 from pydantic import BaseModel, Field
 
@@ -37,11 +38,14 @@ class Entity(BaseModel):
 class WorkerState(BaseModel):
     """Tracks the state and metrics of an individual search worker."""
 
-    id: str
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     strategy: str  # e.g., "broad_english", "specific_code_name"
-    status: Literal["active", "completed", "failed"] = "active"
+    status: Literal["PRODUCTIVE", "DECLINING", "EXHAUSTED", "DEAD_END", "ACTIVE"] = (
+        "ACTIVE"
+    )
     pages_fetched: int = 0
     entities_found: int = 0
+    new_entities: int = 0
     # URLs discovered by this worker to be visited
     personal_queue: List[str] = Field(default_factory=list)
 
@@ -58,11 +62,12 @@ class Gap(BaseModel):
 
 
 class InitialWorkerStrategy(BaseModel):
-    worker_id: str
+    worker_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     strategy: str
     strategy_description: str
     example_queries: List[str]
     page_budget: int = 50
+    status: Literal["ACTIVE"] = "ACTIVE"
 
 
 class ResearchPlan(BaseModel):
@@ -121,4 +126,5 @@ class ResearchState(BaseModel):
         )
     )
 
+    iteration_count: int = 0
     logs: List[str] = Field(default_factory=list)
