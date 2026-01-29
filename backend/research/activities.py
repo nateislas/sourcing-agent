@@ -7,7 +7,7 @@ from temporalio import activity
 from backend.db.connection import AsyncSessionLocal
 from backend.db.repository import ResearchRepository
 from backend.research.agent import ResearchAgent
-from backend.research.state import ResearchState, Entity, ResearchPlan
+from backend.research.state import ResearchState, ResearchPlan, WorkerState
 
 
 @activity.defn
@@ -20,56 +20,47 @@ async def generate_initial_plan(topic: str) -> ResearchPlan:
     return await agent.generate_initial_plan(topic)
 
 
-async def search(query: str) -> list[str]:
+@activity.defn
+async def execute_worker_iteration(worker_state: WorkerState) -> dict:
     """
-    Performs a broad search for the given query.
-    Args:
-        query: The search term.
-    Returns:
-        A list of discoverable URLs.
+    Executes a single iteration for a specific worker.
+    Includes: Search -> Fetch -> Extract -> Queue Management.
     """
-    activity.logger.info(f"Searching for: {query}")
-    return [f"http://example.com/result_for_{query}"]
+    activity.logger.info(
+        f"Worker {worker_state.id} executing iteration with strategy {worker_state.strategy}"
+    )
+
+    # Stub implementation suitable for Orchestrator testing
+    # In reality, this would contain the complex inner loop
+
+    import random
+    import asyncio
+
+    # Simulate work
+    await asyncio.sleep(1)
+
+    new_entities_count = random.randint(0, 5)
+    pages = 10
+    novelty_rate = new_entities_count / pages
+
+    return {
+        "worker_id": worker_state.id,
+        "pages_fetched": pages,
+        "entities_found": new_entities_count + 2,  # Total mentions
+        "new_entities": new_entities_count,
+        "novelty_rate": novelty_rate,
+        "status": "PRODUCTIVE" if novelty_rate > 0.05 else "DECLINING",
+    }
 
 
 @activity.defn
-async def fetch_page(url: str) -> str:
+async def update_plan(state: ResearchState) -> ResearchPlan:
     """
-    Fetches the content of a specific URL.
-    Args:
-        url: The URL to fetch.
-    Returns:
-        The raw content of the page.
+    Updates the research plan based on the current state.
     """
-    activity.logger.info(f"Fetching: {url}")
-    return f"Content of {url}"
-
-
-@activity.defn
-async def extract_entities(_content: str) -> list[dict]:
-    """
-    Extracts structured entities from raw content and persists them.
-    Args:
-        _content: The text content to analyze.
-    Returns:
-        A list of extracted entity dictionaries.
-    """
-    activity.logger.info("Extracting from content")
-    # Stub extraction result
-    extracted = [{"name": "Example Entity", "type": "Test"}]
-
-    # Persist to DB
-    async with AsyncSessionLocal() as session:
-        repo = ResearchRepository(session)
-        for ent_data in extracted:
-            entity = Entity(
-                canonical_name=ent_data["name"],
-                attributes={"type": ent_data["type"]},
-                mention_count=1,
-            )
-            await repo.save_entity(entity)
-
-    return extracted
+    activity.logger.info("Updating research plan based on discoveries.")
+    # Stub - just return existing plan
+    return state.plan
 
 
 @activity.defn
