@@ -40,8 +40,8 @@ class WorkerState(BaseModel):
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     strategy: str  # e.g., "broad_english", "specific_code_name"
-    status: Literal["PRODUCTIVE", "DECLINING", "EXHAUSTED", "DEAD_END", "active"] = (
-        "active"
+    status: Literal["PRODUCTIVE", "DECLINING", "EXHAUSTED", "DEAD_END", "ACTIVE"] = (
+        "ACTIVE"
     )
     pages_fetched: int = 0
     entities_found: int = 0
@@ -67,6 +67,7 @@ class InitialWorkerStrategy(BaseModel):
     strategy_description: str
     example_queries: List[str]
     page_budget: int = 50
+    status: Literal["ACTIVE"] = "ACTIVE"
 
 
 class ResearchPlan(BaseModel):
@@ -125,4 +126,5 @@ class ResearchState(BaseModel):
         )
     )
 
+    iteration_count: int = 0
     logs: List[str] = Field(default_factory=list)
