@@ -1,0 +1,24 @@
+services:
+  worker:
+    build: .
+    volumes:
+      - ./logs:/app/logs
+      - .:/app
+    env_file:
+      - .env
+    command: python backend/worker.py
+    restart: always
+
+  frontend:
+    build: .
+    volumes:
+      - .:/app
+    ports:
+      - "8501:8501"
+    env_file:
+      - .env
+    command: streamlit run frontend/app.py
+    restart: always
+
+volumes:
+  db_data:
