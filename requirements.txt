@@ -7,6 +7,6 @@ streamlit==1.50.0
 temporalio==1.18.2
 # protobuf pinned to reflect mitigation strategy for GHSA-7gcm-g887-7qv7
 protobuf==6.33.4
-google-generativeai
-llama-index-core
-llama-index-llms-gemini
+google-generativeai==0.21.0
+llama-index-core==0.6.2
+llama-index-llms-google-genai==0.6.2

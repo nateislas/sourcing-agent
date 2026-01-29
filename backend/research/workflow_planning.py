@@ -36,6 +36,9 @@ class InitialPlanningWorkflow(Workflow):
         Executes the Expert Planning Prompt to generate analysis, synonyms, and worker strategies.
         """
         topic = ev.get("topic")
+        if not topic:
+            raise ValueError("Missing topic for planning")
+
         # Import the full prompt from prompts.py
         from backend.research.prompts import INITIAL_PLANNING_PROMPT
 

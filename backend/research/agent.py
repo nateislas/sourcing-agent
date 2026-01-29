@@ -18,7 +18,7 @@ class ResearchAgent:
     """
 
     def __init__(
-        self, model_name: str = "models/gemini-3-flash-preview", timeout: int = 20
+        self, model_name: str = "models/gemini-3-flash-preview", timeout: int = 60
     ):
         # Initial planning workflow
         self.planning_workflow = InitialPlanningWorkflow(
