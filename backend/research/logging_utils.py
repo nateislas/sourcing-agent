@@ -42,6 +42,7 @@ def log_api_call(
 ):
     """
     Utility to log API requests and responses in a structured way.
+    Truncates long snippets to keep logs readable.
     """
     timestamp = datetime.now().isoformat()
 
@@ -56,12 +57,30 @@ def log_api_call(
         except Exception:
             return str(obj)
 
+    def truncate_long_strings(obj, max_length=200):
+        """
+        Recursively truncate long strings in nested structures.
+        Keeps snippets and content fields short for readability.
+        """
+        if isinstance(obj, dict):
+            return {k: truncate_long_strings(v, max_length) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [truncate_long_strings(item, max_length) for item in obj]
+        elif isinstance(obj, str):
+            if len(obj) > max_length:
+                return (
+                    obj[:max_length] + f"... [truncated {len(obj) - max_length} chars]"
+                )
+            return obj
+        else:
+            return obj
+
     log_entry = {
         "timestamp": timestamp,
         "provider": provider,
         "method": method,
-        "request": serialize(payload),
-        "response": serialize(response),
+        "request": truncate_long_strings(serialize(payload)),
+        "response": truncate_long_strings(serialize(response)),
     }
 
     logger.info(f"API_CALL: {json.dumps(log_entry, indent=2)}")

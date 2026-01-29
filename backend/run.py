@@ -1,7 +1,15 @@
 import asyncio
 import sys
 import os
+import warnings
 from dotenv import load_dotenv
+
+# Suppress warnings
+warnings.filterwarnings("ignore", category=FutureWarning, module="google.auth")
+warnings.filterwarnings("ignore", category=FutureWarning, module="google.oauth2")
+warnings.filterwarnings("ignore", message=".*urllib3 v2 only supports OpenSSL.*")
+warnings.filterwarnings("ignore", message=".*Both GOOGLE_API_KEY and GEMINI_API_KEY.*")
+warnings.filterwarnings("ignore", category=UserWarning, module="google.genai")
 
 # Ensure the backend is in the path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
