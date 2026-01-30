@@ -89,8 +89,36 @@ class DatabaseStateManager(StateManager):
     async def mark_entity_known(
         self, canonical_name: str, attributes: Optional[dict] = None
     ) -> bool:
+        """
+        Marks an entity as known. Returns True if it's a NEW entity, 
+        False if it already existed (but may have updated its attributes).
+        """
         async with AsyncSessionLocal() as session:
             try:
+                # 1. Check if it exists
+                stmt = select(EntityModel).where(EntityModel.canonical_name == canonical_name)
+                result = await session.execute(stmt)
+                existing = result.scalar_one_or_none()
+
+                if existing:
+                    # Merge attributes: only update if missing or "Unknown"
+                    if attributes:
+                        new_attrs = existing.attributes or {}
+                        updated = False
+                        for k, v in attributes.items():
+                            # Update if current value is missing, empty, or "Unknown"
+                            current_val = new_attrs.get(k)
+                            if v and (not current_val or current_val == "Unknown" or current_val == ""):
+                                new_attrs[k] = v
+                                updated = True
+                        
+                        if updated:
+                            existing.attributes = new_attrs
+                            session.add(existing)
+                            await session.commit()
+                    return False  # Already known
+
+                # 2. Create new if doesn't exist
                 entity = EntityModel(
                     canonical_name=canonical_name, attributes=attributes or {}
                 )
@@ -98,6 +126,8 @@ class DatabaseStateManager(StateManager):
                 await session.commit()
                 return True
             except IntegrityError:
+                # Race condition: someone else created it. 
+                # We could retry the merge here, but for now we'll just return False.
                 await session.rollback()
                 return False
             except Exception as e:
