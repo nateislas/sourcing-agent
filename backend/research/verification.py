@@ -37,29 +37,140 @@ class VerificationAgent:
 
     def _build_verification_prompt(self, entity: Entity, constraints: Dict[str, Any]) -> str:
         """
-        Constructs the prompt for the verification LLM.
+        Builds the prompt for the verification agent with improved constraint clarity.
         """
-        evidence_text = "\n".join([f"- [{e.timestamp}] {e.content}" for e in entity.evidence])
+        # Format constraints for the LLM
+        hard_constraints = constraints.get("constraints", {}).get("hard", [])
+        soft_constraints = constraints.get("constraints", {}).get("soft", [])
+        target = constraints.get("target", "Not specified")
+        modality = constraints.get("modality", "Not specified")
+        stage = constraints.get("stage", "Not specified")
+        geography = constraints.get("geography", "Not specified")
         
+        # Prepare evidence text with sources
+        evidence_text = ""
+        for i, snippet in enumerate(entity.evidence, 1):
+             evidence_text += f"Source {i} ({snippet.source_url}):\n\"{snippet.content}\"\n\n"
+
+        if not evidence_text:
+            evidence_text = "No evidence provided."
+
         return f"""
-        You are a strict biomedical auditor. Your job is to verify if a discovered asset matches specific research constraints.
-        
-        ### Asset to Verify
-        Name: {entity.canonical_name}
-        Aliases: {', '.join(entity.aliases)}
-        Current Attributes: {entity.attributes}
-        
-        ### Evidence Snippets
-        {evidence_text}
-        
-        ### Constraints (MUST MATCH)
-        {constraints}
-        
-        ### Rules
-        1. **Strictness**: If the evidence explicitly contradicts a hard constraint (e.g. "Antibody" when "Small Molecule" is required), REJECT it.
-        2. **Uncertainty**: If the evidence is insufficient to confirm a hard constraint OR if critical metadata (Owner, Stage) is missing, mark as UNCERTAIN and list the missing fields.
-        3. **Verification**: Only mark as VERIFIED if all hard constraints are supported by evidence AND critical metadata is present.
-        4. **Critical Metadata**: We need at least 'Owner' (Company/Institution) and 'Development Stage' to consider it fully verified.
-        
-        Analyze the evidence and provide your verdict.
-        """
+    You are a strict biomedical auditor. Your job is to verify if a discovered ASSET matches specific research constraints.
+    
+    ### 1. Asset Profile
+    Asset Name: {entity.canonical_name}
+    Aliases: {', '.join(entity.aliases)}
+    Drug Class: {entity.drug_class or 'Unknown'}
+    Clinical Phase: {entity.clinical_phase or 'Unknown'}
+    Mention Count: {entity.mention_count}
+    Current Attributes: {entity.attributes}
+    
+    ### 2. Research Constraints (THE CRITERIA)
+    Target: {target}
+    Modality: {modality}
+    Development Stage: {stage}
+    Geography: {geography}
+    
+    Must-Have (Hard) Constraints:
+    {', '.join(hard_constraints) if hard_constraints else "None explicitly listed, but match the Target/Modality above."}
+    
+    Nice-to-Have (Soft) Constraints:
+    {', '.join(soft_constraints) if soft_constraints else "None"}
+
+    ### 3. Evidence Snippets
+    {evidence_text}
+    
+    ### 4. Evidence Quality Tiers
+    
+    Evidence sources are weighted by reliability. When making your decision, prioritize higher-tier sources:
+    
+    **Tier 1 (Highest Trust):**
+    - Regulatory filings (FDA, EMA, NMPA, PMDA)
+    - Clinical trial registries (clinicaltrials.gov, ChiCTR, EUCTR)
+    - Patent applications with detailed experimental data
+    
+    **Tier 2 (High Trust):**
+    - Company press releases and official pipeline pages
+    - Peer-reviewed publications in major journals (Nature, Science, Cell, NEJM, Lancet)
+    - Conference abstracts from AACR, ASCO, ASH, ESMO
+    
+    **Tier 3 (Medium Trust):**
+    - News articles citing company sources or interviews
+    - Vendor catalogs (Selleckchem, MedChemExpress, Cayman Chemical)
+    - Academic theses and institutional repositories
+    - Industry reports (e.g., GlobalData, Evaluate Pharma)
+    
+    **Tier 4 (Low Trust):**
+    - Blogs and opinion pieces
+    - Social media mentions
+    - Secondary citations without primary source verification
+    
+    **CRITICAL RULES:**
+    - If Tier 1-2 evidence contradicts Tier 3-4, trust the higher tier
+    - If same tier contradicts, prefer more recent date
+    - Multiple sources of same tier outweigh single source
+    
+    **Example:**
+    - Tier 1: FDA filing says "Phase 2 for breast cancer"
+    - Tier 3: News article says "Preclinical"
+    → VERDICT: Trust Tier 1 (Phase 2)
+    
+    ### 5. Verification Logic
+    
+    **Step 1: Does the evidence confirm the Target?**
+    - Look for explicit mentions (e.g., "CDK12 inhibitor", "binds to CDK12")
+    - Weight by tier: Tier 1-2 confirmation is sufficient even if Tier 3 is vague
+    
+    **Step 2: Does the evidence confirm the Modality?**
+    - Small Molecule vs Antibody vs ADC vs PROTAC vs Cell Therapy
+    - REJECT if hard evidence contradicts (e.g., constraint needs Small Molecule but Tier 1-2 says Antibody)
+    
+    **Step 3: Does the evidence confirm the Stage?**
+    - Preclinical / IND-Enabling / Phase 1 / Phase 2 / Phase 3 / Approved / Discontinued
+    - Use highest-tier source for stage determination
+    
+    **Step 4: Does the evidence confirm the Geography?** (Only if constrained)
+    - Check for country mentions, company headquarters, trial locations
+    
+    **Step 5: Is the asset owned by a specific company?**
+    - Check patent assignees, press releases, pipeline pages
+    
+    ### 6. Handling Contradictions
+    
+    When evidence conflicts:
+    1. **Higher tier wins** (Tier 1 > Tier 2 > Tier 3 > Tier 4)
+    2. **More recent wins** (if same tier, prefer newer publication date)
+    3. **Multiple sources win** (3 Tier 2 sources > 1 Tier 2 source)
+    
+    ### 7. Missing Data Prioritization
+    
+    Prioritize gap-filling by criticality:
+    
+    **Critical (P0):** Must have for verification
+    - Target (without this, can't verify constraint match)
+    - Owner (needed for regional filtering and partnership analysis)
+    - Stage (needed for development phase filtering)
+    
+    **Important (P1):** Improves confidence
+    - Modality (helps verify therapeutic type)
+    - Indication (confirms disease area match)
+    
+    **Nice-to-have (P2):** Supplementary
+    - Geography (useful for regional competitive analysis)
+    - Specific clinical trial IDs
+    
+    **Decision Rules:**
+    - If UNCERTAIN due to missing P0 field (Target/Owner/Stage) → Mark for gap-filling
+    - If UNCERTAIN due to missing P1-P2 only → Accept as UNCERTAIN without gap-filling
+    
+    ### 8. Verdict Rules
+    - **VERIFIED**: The evidence (Tier 1-2) explicitly confirms the Target AND Modality AND at least one of (Stage/Owner).
+    - **REJECTED**: The evidence (Tier 1-2) contradicts a Hard Constraint (e.g., wrong target, wrong modality, contradicts geographic constraint).
+    - **UNCERTAIN**: 
+        - Evidence is vague or only from Tier 3-4 sources
+        - Hard constraints match, but critical P0 metadata (Target/Owner/Stage) is missing
+        - Evidence is contradictory across same-tier sources
+    
+    Analyze the evidence and provide your verdict with reasoning.
+    """

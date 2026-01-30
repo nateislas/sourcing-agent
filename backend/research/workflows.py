@@ -20,14 +20,14 @@ class DeepResearchOrchestrator:
     """
 
     @workflow.run
-    async def run(self, topic: str) -> dict:
+    async def run(self, topic: str, session_id: str = None) -> dict:
         """
         Executes the main research loop for a given topic.
         """
         workflow.logger.info("Starting research on: %s", topic)
 
         # 1. Initialize State
-        state = ResearchState(topic=topic, status="running")
+        state = ResearchState(id=session_id, topic=topic, status="running") if session_id else ResearchState(topic=topic, status="running")
         state.logs.append("Workflow initialized.")
         await workflow.execute_activity(
             activities.save_state, state, start_to_close_timeout=timedelta(seconds=5)
@@ -158,17 +158,16 @@ class DeepResearchOrchestrator:
             state.iteration_count += 1
             global_novelty = total_new_entities / max(total_pages, 1)
             log_msg = (
-                "Iteration %s completed. Found %d new entities. Global Novelty: %.2f%%"
+                "Iteration %s completed. Found %d new entities. Novelty Rate: %.2f entities/page"
             )
             state.logs.append(
-                log_msg
-                % (state.iteration_count, total_new_entities, global_novelty * 100)
+                log_msg % (state.iteration_count, total_new_entities, global_novelty)
             )
             workflow.logger.info(
                 log_msg,
                 state.iteration_count,
                 total_new_entities,
-                global_novelty * 100,
+                global_novelty,
             )
 
             # --- Check Stopping Criteria ---

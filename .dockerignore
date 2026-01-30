@@ -23,3 +23,5 @@ coverage.xml
 test.db
 logs/
 frontend/.streamlit
+node_modules/
+frontend/node_modules/

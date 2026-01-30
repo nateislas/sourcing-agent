@@ -42,48 +42,152 @@ def generate_extraction_instruction(research_topic: str) -> str:
 
 RESEARCH CONTEXT: The user is researching: "{research_topic}"
 
-EXTRACTION SCOPE:
-Extract any asset that is RELATED to this research topic. For example:
-- If the topic mentions "CDK12", extract CDK12 inhibitors, CDK12/13 dual inhibitors, CDK12 degraders
-- If the topic mentions "TNBC", extract assets being studied in triple-negative breast cancer
-- Extract assets even if they don't perfectly match all aspects of the query
+I. WHAT IS AN ASSET? (CRITICAL - READ CAREFULLY)
 
-DO NOT filter by constraints like development stage, geography, or exact modality.
-We want broad discovery now - filtering happens later.
+An ASSET is a specific drug candidate or therapeutic compound (NOT a target protein, NOT a disease) with:
+1. **A concrete identifier:** code name (e.g., "BMS-986158"), chemical name (e.g., "trastuzumab deruxtecan"), or patent designation (e.g., "Compound 7a from CN112345678A")
+2. **Evidence proving it exists:** mentioned in patents, trials, press releases, pipeline pages, or peer-reviewed publications
 
-An ASSET must have a unique identifier (name, code, or program designation).
+✅ EXAMPLES OF VALID ASSETS (DO EXTRACT):
+- BMS-986158 (code name)
+- Trastuzumab deruxtecan / DS-8201 (chemical name with alias)
+- "Compound 7a" from patent CN112345678A (patent compound with context)
+- ISM9274 (development code)
+- Dinaciclib, niraparib, olaparib (approved drugs with chemical names)
 
-EXTRACT (if related to the topic):
-- Named drugs/compounds: ISM9274, dinaciclib, niraparib, CT7439
-- Development codes: BMS-986158, CTX-712, SR-4835  
-- Research compounds: Compound 7f, YJZ5118, compound 14k
-- Program names WITH identifiers: "AI-designed CDK12/13 inhibitor ISM9274"
+❌ EXAMPLES OF INVALID ENTITIES (DO NOT EXTRACT):
+- CDK12 (protein target, not a therapeutic compound)
+- "CDK12 inhibitors" (compound class, not a specific asset)
+- Triple-negative breast cancer (disease/indication, not a therapeutic)
+- Pfizer, Bristol Myers Squibb (companies, not compounds)
+- "Future CDK12 inhibitors might..." (hypothetical, no concrete identifier)
 
-DO NOT EXTRACT (never extract these):
-- Target proteins themselves: CDK12, PARP, HER2, PD-1
-- Generic drug classes without names: "CDK12 inhibitors", "PARP inhibitors", "small molecules"
-- Diseases/indications: "breast cancer", "TNBC", "pancreatic cancer"
-- Mechanisms: "DNA damage response"
-- General treatments: "chemotherapy", "immunotherapy"
-- Off-topic assets: If researching CDK12, don't extract random KRASG12C inhibitors
+**CRITICAL RULE:** If the text only mentions a target protein (e.g., "CDK12") or a generic class (e.g., "CDK12 inhibitors") without naming a SPECIFIC compound with an identifier, DO NOT extract anything. Wait for concrete evidence of a real asset.
 
-CRITICAL RULES:
-1. Only extract SPECIFIC assets with names/codes, not generic classes
-2. Assets should be RELATED to the research topic
-3. Don't filter strictly - we want broad recall now
+II. INCLUSION RULES (BROAD MATCH):
+Extract any asset that is RELATED to this research topic:
+- If topic mentions "CDK12", extract specific CDK12 inhibitors with identifiers (e.g., SR-4835, THZ531)
+- If topic mentions "TNBC", extract specific assets tested in triple-negative breast cancer
+- Extract assets even if some metadata is missing (stage unknown is OK if asset identifier is clear)
+- DO NOT filter by development stage or geography—we verify constraints later
 
-For each asset, extract:
-- canonical_name: The primary identifier
-- aliases: Alternative names/codes for the SAME asset
-- target: Biological target (e.g., CDK12, PARP)
-- modality: Drug type (Small molecule, Antibody, PROTAC, etc.)
-- product_stage: Development stage (Preclinical, Phase 1, IND, etc.)
-- indication: Disease being treated
-- owner: Company/institution developing it
-- geography: Location if mentioned
-- evidence_excerpt: A short (1-3 sentence) VERBATIM chunk of text from the source that mentions the asset and provides evidence for its classification. This is used for auditability.
+III. EXCLUSION RULES (STRICT):
+DO NOT EXTRACT:
+- Target proteins themselves (e.g., "CDK12", "PARP", "HER2")
+- Generic drug classes without specific names (e.g., "CDK12 inhibitors" as a class)
+- Diseases/indications alone (e.g., "breast cancer", "TNBC")
+- Companies or institutions (e.g., "Pfizer", "Insilico Medicine")
+- Mechanisms or pathways (e.g., "DNA damage response")
+- Off-topic assets (e.g., KRAS inhibitors when researching CDK12)
 
-Return a JSON array of assets. Return [] if no specific assets are found.
+IV. ATTRIBUTE EXTRACTION RULES (STRICT - APPLY INFERENCE):
+
+For EACH asset you extract, apply these inference rules to populate attributes:
+
+**Target Extraction (Biological Target):**
+- IF text says "X inhibitor" → target = "X"
+- IF text says "binds to Y" or "targets Y" → target = "Y"
+- IF compound mentioned with indication only → target = "Unknown"
+- Example: "CDK12 inhibitor SR-4835" → target = "CDK12"
+
+**Modality Extraction (Drug Type):**
+- IF text says "small molecule", "oral drug", "chemical compound", "inhibitor" → modality = "Small Molecule"
+- IF text says "antibody", "mAb", "immunotherapy" → modality = "Antibody"
+- IF text says "ADC", "antibody-drug conjugate" → modality = "ADC"
+- IF text says "PROTAC", "degrader" → modality = "PROTAC"
+- IF text says "cell therapy", "CAR-T" → modality = "Cell Therapy"
+- IF unclear but has chemical structure diagram → modality = "Small Molecule"
+- Example: "The degrader compound 7b" → modality = "PROTAC"
+
+**Stage Extraction (Development Phase):**
+- IF text says "preclinical", "in vitro", "in vivo" (non-human studies) → product_stage = "Preclinical"
+- IF text says "Phase I", "Phase 1", "first-in-human", "FIH" → product_stage = "Phase 1"
+- IF text says "Phase II", "Phase 2" → product_stage = "Phase 2"
+- IF text says "Phase III", "Phase 3" → product_stage = "Phase 3"
+- IF text says "IND-enabling", "preparing IND" → product_stage = "IND-Enabling"
+- IF text says "approved", "FDA approved", "marketed", "on market" → product_stage = "Approved"
+- IF text says "discontinued", "halted", "terminated" → product_stage = "Discontinued"
+- Example: "ISM9274 nominated as preclinical candidate" → product_stage = "Preclinical"
+
+**Owner Extraction (Company/Institution):**
+- IF company name appears WITH the asset mention → owner = company name
+- IF patent assignee listed → owner = assignee company
+- IF academic paper with author affiliation → owner = institution
+- IF code name prefix suggests company (e.g., "BMS-" → Bristol Myers Squibb) → owner = inferred company
+- Example: "Insilico Medicine's ISM9274" → owner = "Insilico Medicine"
+
+**Geography Extraction (Regional Focus):**
+- IF text mentions country name with asset → geography = country
+- IF Chinese company or ChiCTR trial → geography = "China"
+- IF Japanese company or PMDA filing → geography = "Japan"
+
+**Indication Extraction (Disease/Condition):**
+- IF disease name appears with asset → indication = disease
+- Example: "SR-4835 for TNBC" → indication = "Triple-negative breast cancer"
+
+**CRITICAL RULES:**
+- "Unknown" is ONLY acceptable if the text genuinely does not contain the information
+- Do NOT be lazy: If text says "The CDK12 inhibitor ISM9274", you MUST extract target="CDK12", modality="Small Molecule"
+- Apply inference: "inhibitor" implies Small Molecule unless stated otherwise
+
+V. EXTRACTION EXAMPLES (TEXT → JSON MAPPING):
+
+**Example 1:**
+Text: "BMS-986158, a selective CDK12/13 inhibitor, showed efficacy in preclinical TNBC models"
+→ Output:
+```json
+{{
+  "canonical_name": "BMS-986158",
+  "aliases": [],
+  "target": "CDK12/13",
+  "modality": "Small Molecule",
+  "product_stage": "Preclinical",
+  "indication": "Triple-negative breast cancer",
+  "geography": "Unknown",
+  "owner": "Bristol Myers Squibb",
+  "evidence_excerpt": "BMS-986158, a selective CDK12/13 inhibitor, showed efficacy in preclinical TNBC models"
+}}
+```
+
+**Example 2:**
+Text: "Insilico Medicine nominated ISM9274 as the preclinical candidate for CDK12/13 inhibition in August 2023"
+→ Output:
+```json
+{{
+  "canonical_name": "ISM9274",
+  "aliases": [],
+  "target": "CDK12/13",
+  "modality": "Small Molecule",
+  "product_stage": "Preclinical",
+  "indication": "Unknown",
+  "geography": "Unknown",
+  "owner": "Insilico Medicine",
+  "evidence_excerpt": "Insilico Medicine nominated ISM9274 as the preclinical candidate for CDK12/13 inhibition in August 2023"
+}}
+```
+
+**Example 3 (INVALID - Do NOT Extract):**
+Text: "CDK12 is a promising target for triple-negative breast cancer treatment"
+→ Output: `[]` (empty array - mentions target protein only, no specific asset)
+
+**Example 4:**
+Text: "The degrader compound 7b showed potent CDK12/13 degradation activity"
+→ Output:
+```json
+{{
+  "canonical_name": "Compound 7b",
+  "aliases": ["7b"],
+  "target": "CDK12/13",
+  "modality": "PROTAC",
+  "product_stage": "Unknown",
+  "indication": "Unknown",
+  "geography": "Unknown",
+  "owner": "Unknown",
+  "evidence_excerpt": "The degrader compound 7b showed potent CDK12/13 degradation activity"
+}}
+```
+
+Return a JSON array of assets matching this schema. Return `[]` if no specific assets with identifiers are found.
 """
 
 

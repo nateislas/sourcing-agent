@@ -205,21 +205,46 @@ class DeepResearchWorkflow(Workflow):
                 alias = item["alias"]
                 evidence = item["evidence"]
 
+                # Extract structured attributes
+                attributes = {
+                    "target": item.get("target"),
+                    "modality": item.get("modality"),
+                    "product_stage": item.get("product_stage"),
+                    "indication": item.get("indication"),
+                    "geography": item.get("geography"),
+                    "owner": item.get("owner"),
+                    **item.get("attributes", {})  # Merge any other attributes if present
+                }
+                # Remove None values
+                attributes = {k: v for k, v in attributes.items() if v}
+
                 if canonical not in state.known_entities:
                     state.known_entities[canonical] = Entity(
                         canonical_name=canonical,
                         mention_count=1,
-                        drug_class=item.get("drug_class"),
-                        clinical_phase=item.get("clinical_phase"),
+                        drug_class=attributes.get("modality"), # specific field on Entity
+                        clinical_phase=attributes.get("product_stage"), # specific field on Entity
+                        attributes=attributes # generic dict for everything else
                     )
                 else:
                     entity = state.known_entities[canonical]
                     entity.mention_count += 1
-                    # Update metadata if missing
-                    if not entity.drug_class:
-                        entity.drug_class = item.get("drug_class")
-                    if not entity.clinical_phase:
-                        entity.clinical_phase = item.get("clinical_phase")
+                    
+                    # Merge new attributes into existing
+                    current_attrs = entity.attributes or {}
+                    for k, v in attributes.items():
+                        # Update if missing or Unknown
+                        if v and v != "Unknown":
+                            if k not in current_attrs or current_attrs[k] == "Unknown":
+                                current_attrs[k] = v
+                    
+                    entity.attributes = current_attrs
+                    
+                    # Update specific fields if improved
+                    if attributes.get("modality") and attributes["modality"] != "Unknown":
+                        entity.drug_class = attributes["modality"]
+                    if attributes.get("product_stage") and attributes["product_stage"] != "Unknown":
+                        entity.clinical_phase = attributes["product_stage"]
 
                 # Add evidence and aliases
                 entity = state.known_entities[canonical]
@@ -229,17 +254,17 @@ class DeepResearchWorkflow(Workflow):
         state.iteration_count += 1
         global_novelty = total_new_entities / max(total_pages, 1)
         log_msg = (
-            "Iteration %s completed. Found %d new entities. Global Novelty: %.2f%%"
+            "Iteration %s completed. Found %d new entities. Novelty Rate: %.2f entities/page"
         )
         state.logs.append(
-            log_msg % (state.iteration_count, total_new_entities, global_novelty * 100)
+            log_msg % (state.iteration_count, total_new_entities, global_novelty)
         )
         logger = get_session_logger(state.id)
         logger.info(
             log_msg,
             state.iteration_count,
             total_new_entities,
-            global_novelty * 100,
+            global_novelty,
         )
 
         # --- Stopping Criteria Check ---
