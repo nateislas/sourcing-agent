@@ -61,8 +61,9 @@ class ResearchRepository:
                 "session_id": s.session_id,
                 "topic": s.topic,
                 "status": s.status,
+                "created_at": s.created_at,
                 "updated_at": s.updated_at,
-                "entities_count": s.state_dump.get("known_entities_count", 0) if s.state_dump else 0
+                "entities_count": len(s.state_dump.get("known_entities", {})) if s.state_dump else 0
             }
             for s in sessions
         ]
