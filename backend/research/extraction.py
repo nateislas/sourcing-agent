@@ -26,12 +26,28 @@ class DrugExtractionSchema(BaseModel):
         description="Other names, code names, or former names (e.g. BMS-986016)",
         default_factory=list,
     )
-    drug_class: Optional[str] = Field(
-        description="The mechanism of action or class (e.g. LAG-3 inhibitor)",
+    target: Optional[str] = Field(
+        description="The biological target (e.g. LAG-3, PD-1)",
         default=None,
     )
-    clinical_phase: Optional[str] = Field(
-        description="The current clinical trial phase (e.g. Phase 2, Phase 3)",
+    modality: Optional[str] = Field(
+        description="The type of therapy (e.g. Monoclonal antibody, Small molecule)",
+        default=None,
+    )
+    product_stage: Optional[str] = Field(
+        description="The current development stage (e.g. Phase 2, Preclinical)",
+        default=None,
+    )
+    indication: Optional[str] = Field(
+        description="The disease or condition being treated",
+        default=None,
+    )
+    geography: Optional[str] = Field(
+        description="Geographic scope or location of the entity/asset",
+        default=None,
+    )
+    owner: Optional[str] = Field(
+        description="Company or institution that owns the asset",
         default=None,
     )
     trial_ids: Optional[List[str]] = Field(
@@ -230,8 +246,14 @@ class EntityExtractor:
                     {
                         "canonical": drug.canonical_name,
                         "alias": name,
-                        "drug_class": drug.drug_class,
-                        "clinical_phase": drug.clinical_phase,
+                        "attributes": {
+                            "target": drug.target,
+                            "modality": drug.modality,
+                            "product_stage": drug.product_stage,
+                            "indication": drug.indication,
+                            "geography": drug.geography,
+                            "owner": drug.owner,
+                        },
                         "evidence": [snippet],
                     }
                 )

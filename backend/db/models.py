@@ -79,3 +79,15 @@ class WorkerLogModel(Base):
     pages_fetched: Mapped[int] = mapped_column(Integer)
     entities_found: Mapped[int] = mapped_column(Integer)
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class VisitedURL(Base):
+    """Tracks unique URLs visited across all workers to prevent redundant fetching."""
+
+    __tablename__ = "visited_urls"
+
+    url: Mapped[str] = mapped_column(String, primary_key=True)
+    # We might want to scope this by research_id if we support multiple concurrent research topics.
+    # For now, simplistic global deduplication or explicit scoping.
+    research_id: Mapped[str] = mapped_column(String, nullable=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
