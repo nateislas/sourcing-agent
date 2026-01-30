@@ -1,3 +1,8 @@
+"""
+Entry point for running the Deep Research Workflow from the command line.
+Loads environment variables, initializes the database, and executes the research process.
+"""
+
 import asyncio
 import sys
 import os
@@ -17,11 +22,13 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # Load env before other imports that might use them
 load_dotenv()
 
+# pylint: disable=wrong-import-position
 from backend.research.orchestrator import DeepResearchWorkflow
 from backend.db.init_db import init_db
 
 
 async def main():
+    """Main execution loop for the research CLI."""
     # 1. Get topic from command line or interactive
     if len(sys.argv) > 1:
         topic = " ".join(sys.argv[1:])
@@ -74,7 +81,7 @@ async def main():
                 if entity.aliases:
                     print(f"  Aliases: {', '.join(list(entity.aliases)[:3])}")
 
-    except Exception as e:
+    except (asyncio.TimeoutError, ValueError, RuntimeError) as e:
         print(f"\nError during research: {e}")
 
 

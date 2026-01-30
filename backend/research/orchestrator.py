@@ -1,3 +1,8 @@
+"""
+Orchestrator Workflow for the Deep Research Application.
+Manages the iterative research process, workers, and state aggregation.
+"""
+
 import os
 from typing import List, Optional, Union
 
@@ -25,9 +30,6 @@ class DeepResearchWorkflow(Workflow):
     Orchestrates the iterative research process.
     """
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
     @step
     async def start(self, ctx: Context, ev: StartEvent) -> PlanCreatedEvent:
         """
@@ -44,7 +46,7 @@ class DeepResearchWorkflow(Workflow):
 
         # Setup session logger
         logger = get_session_logger(state.id)
-        logger.info(f"Research session started for topic: {topic}")
+        logger.info("Research session started for topic: %s", topic)
 
         # Log start
         state.logs.append("Workflow initialized.")
@@ -163,11 +165,11 @@ class DeepResearchWorkflow(Workflow):
                 total_new_entities += res.new_entities
                 total_pages += res.pages_fetched
 
-            # Process Discovered Links
-            for link in getattr(res, "discovered_links", []):
-                if link not in state.visited_urls:
-                    state.visited_urls.add(link)
-                    w_state.personal_queue.append(link)
+                # Process Discovered Links
+                for link in getattr(res, "discovered_links", []):
+                    if link not in state.visited_urls:
+                        state.visited_urls.add(link)
+                        w_state.personal_queue.append(link)
 
             # Merge entities into global state
             for item in res.extracted_data:
@@ -198,16 +200,25 @@ class DeepResearchWorkflow(Workflow):
 
         state.iteration_count += 1
         global_novelty = total_new_entities / max(total_pages, 1)
-        log_msg = f"Iteration {state.iteration_count} completed. Found {total_new_entities} new entities. Global Novelty: {global_novelty:.2%}"
-        state.logs.append(log_msg)
+        log_msg = (
+            "Iteration %s completed. Found %d new entities. Global Novelty: %.2f%%"
+        )
+        state.logs.append(
+            log_msg % (state.iteration_count, total_new_entities, global_novelty * 100)
+        )
         logger = get_session_logger(state.id)
-        logger.info(log_msg)
+        logger.info(
+            log_msg,
+            state.iteration_count,
+            total_new_entities,
+            global_novelty * 100,
+        )
 
         # --- Stopping Criteria Check ---
         # 1. Budget exhausted? (Stub check)
         # 2. Novelty low? (Stop if novelty < 5% for 2 iterations)
         # 3. Max iterations?
-        max_iters = int(os.getenv("MAX_ITERATIONS", 5))
+        max_iters = int(os.getenv("MAX_ITERATIONS", "5"))
 
         should_stop = False
         if state.iteration_count >= max_iters:

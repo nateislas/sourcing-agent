@@ -1,5 +1,11 @@
+"""
+Extraction logic for the Deep Research Application.
+Handles web content cleaning, link discovery, and structured entity extraction.
+"""
+
 import os
 import io
+from datetime import datetime
 from urllib.parse import urljoin
 from typing import List, Optional
 from bs4 import BeautifulSoup
@@ -35,6 +41,7 @@ class DrugExtractionSchema(BaseModel):
     @field_validator("aliases", "trial_ids", mode="before")
     @classmethod
     def ensure_list(cls, v):
+        """Ensures that the input is a list, returning an empty list if None."""
         if v is None:
             return []
         return v
@@ -49,7 +56,7 @@ class WebExtractor:
     def __init__(self):
         pass
 
-    async def extract_content(self, html_or_markdown: str, url: str) -> str:
+    async def extract_content(self, html_or_markdown: str, _url: str) -> str:
         """
         Cleans content. If it looks like raw HTML, use trafilatura.
         """
@@ -99,9 +106,6 @@ class LlamaExtractionClient:
 
     async def close(self):
         """Closes the underlying client."""
-        # AsyncLlamaCloud doesn't have an explicit close in the current SDK version shown,
-        # but managing instances properly is good.
-        pass
 
     async def _get_or_create_agent(self):
         """Ensures an extraction agent exists for drug discovery."""
@@ -183,7 +187,7 @@ class LlamaExtractionClient:
         data = result.data
         if isinstance(data, dict):
             return [DrugExtractionSchema(**data)]
-        elif isinstance(data, list):
+        if isinstance(data, list):
             return [DrugExtractionSchema(**item) for item in data]
         return []
 
@@ -197,6 +201,7 @@ class EntityExtractor:
         self.llama_client = LlamaExtractionClient(research_id=research_id)
 
     async def close(self):
+        """Closes the underlying client."""
         await self.llama_client.close()
 
     async def extract_entities(
@@ -215,7 +220,7 @@ class EntityExtractor:
             snippet = EvidenceSnippet(
                 source_url=source_url,
                 content=text[:500] if len(text) > 500 else text,
-                timestamp="2026-01-29T16:00:00Z",
+                timestamp=datetime.utcnow().isoformat() + "Z",
             )
 
             # Canonical and Aliases

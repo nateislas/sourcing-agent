@@ -1,6 +1,12 @@
+"""
+Temporal activities for the Deep Research Application.
+Handles external interactions like searching and fetching content.
+"""
+
 import os
 import re
-from typing import List, Optional, Any
+import logging
+from typing import Optional
 from temporalio import activity
 from backend.db.connection import AsyncSessionLocal
 from backend.db.repository import ResearchRepository
@@ -12,8 +18,6 @@ from backend.research.client_search import (
 )
 from backend.research.extraction import EntityExtractor
 
-
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +37,7 @@ async def generate_initial_plan(
     """
     Generates the initial research plan using the Research Agent.
     """
-    safe_get_logger().info(f"Generating initial plan for: {topic}")
+    safe_get_logger().info("Generating initial plan for: %s", topic)
     agent = ResearchAgent()
     return await agent.generate_initial_plan(topic, research_id=research_id)
 
@@ -45,7 +49,9 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
     Includes: Search -> Fetch -> Extract -> Queue Management.
     """
     safe_get_logger().info(
-        f"Worker {worker_state.id} executing iteration with strategy {worker_state.strategy}"
+        "Worker %s executing iteration with strategy %s",
+        worker_state.id,
+        worker_state.strategy,
     )
 
     # Initialize clients
@@ -61,7 +67,7 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
 
         # 1. Search Phase
         # Use round-robin query selection based on iteration
-        page_budget = int(os.getenv("WORKER_PAGE_BUDGET", 50))
+        page_budget = int(os.getenv("WORKER_PAGE_BUDGET", "50"))
         iteration_index = worker_state.pages_fetched // page_budget
         query_index = (
             iteration_index % len(worker_state.queries) if worker_state.queries else 0
@@ -96,7 +102,7 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
                 break
 
             safe_get_logger().info(
-                f"Worker {worker_state.id} processing URL: {current_url}"
+                "Worker %s processing URL: %s", worker_state.id, current_url
             )
 
             # For each URL, we try to get high-fidelity markdown via Tavily Extract
@@ -113,7 +119,7 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
                     text_content = ""
             except Exception as e:
                 safe_get_logger().warning(
-                    f"Tavily extraction failed for {current_url}: {e}"
+                    "Tavily extraction failed for %s: %s", current_url, e
                 )
                 raw_content = None
                 text_content = ""
@@ -185,7 +191,7 @@ async def save_state(state: ResearchState) -> bool:
     Returns:
         True if successful.
     """
-    safe_get_logger().info(f"Saving state for topic: {state.topic}")
+    safe_get_logger().info("Saving state for topic: %s", state.topic)
     async with AsyncSessionLocal() as session:
         repo = ResearchRepository(session)
         await repo.save_session(state)

@@ -15,14 +15,18 @@ except ImportError:
 
 
 def safe_uuid4() -> str:
-    """Returns a UUID4 string."""
+    """Returns a UUID4 string, using Temporal's deterministic generator if in a workflow."""
+    if workflow:
+        try:
+            return str(workflow.uuid4())
+        except RuntimeError:
+            # Not in a workflow context
+            pass
     return str(uuid.uuid4())
 
 
 def safe_getenv(key: str, default: Any = None) -> Any:
-    """Returns an environment variable, handling Temporal's sandbox restrictions."""
-    # In sandbox, accessing os.environ might be restricted
-    # os.getenv is generally safer if it's marked as pass-through
+    """Return the environment variable using os.getenv; does not perform Temporal sandbox handling."""
     return os.getenv(key, default)
 
 
@@ -97,7 +101,7 @@ class InitialWorkerStrategy(BaseModel):
     strategy_description: str
     example_queries: List[str]
     page_budget: int = Field(
-        default_factory=lambda: int(safe_getenv("WORKER_PAGE_BUDGET", 50))
+        default_factory=lambda: int(safe_getenv("WORKER_PAGE_BUDGET", "50"))
     )
     status: Literal["ACTIVE"] = "ACTIVE"
 
@@ -116,7 +120,7 @@ class ResearchPlan(BaseModel):
         default_factory=list, description="Initial spawn configuration"
     )
     budget_reserve_pct: float = Field(
-        default_factory=lambda: float(safe_getenv("BUDGET_RESERVE_PCT", 0.6)),
+        default_factory=lambda: float(safe_getenv("BUDGET_RESERVE_PCT", "0.6")),
         description="Percentage of budget to reserve for adaptive phase",
     )
     reasoning: str = Field(

@@ -1,3 +1,8 @@
+"""
+Clients for external search APIs (Perplexity and Tavily).
+Provides wrappers for structured search results and logging.
+"""
+
 import os
 import asyncio
 from typing import List, Optional, Union
@@ -7,6 +12,8 @@ from backend.research.logging_utils import get_session_logger, log_api_call
 
 
 class SearchResult:
+    """Unified search result object used across different search clients."""
+
     def __init__(
         self,
         title: str,

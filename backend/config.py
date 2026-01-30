@@ -20,7 +20,7 @@ TEMPORAL_ADDRESS = os.getenv("TEMPORAL_ADDRESS", "localhost:7233")
 TEMPORAL_NAMESPACE = os.getenv("TEMPORAL_NAMESPACE", "default")
 # Use a specific task queue for this application
 TASK_QUEUE = "deep-research-queue"
-MAX_ITERATIONS = int(os.getenv("MAX_ITERATIONS", 5))
+MAX_ITERATIONS = int(os.getenv("MAX_ITERATIONS", "5"))
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./test.db")

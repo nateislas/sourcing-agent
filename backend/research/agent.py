@@ -5,16 +5,16 @@ Handles the intelligent planning and decision making logic using LLMs.
 
 import os
 import json
-import re
 import logging
 from typing import Optional
 
-from llama_index.core.llms import ChatMessage
+from llama_index.core.base.llms.types import ChatMessage
 from backend.research.state import (
     ResearchPlan,
     ResearchState,
     InitialWorkerStrategy,
     Gap,
+    safe_uuid4,
 )
 from backend.research.workflow_planning import InitialPlanningWorkflow
 from backend.research.llm_factory import get_llm
@@ -38,7 +38,7 @@ class ResearchAgent:
         self.model_name = model_name or os.getenv(
             "RESEARCH_MODEL", "models/gemini-3-flash-preview"
         )
-        self.timeout = timeout or int(os.getenv("RESEARCH_TIMEOUT", 60))
+        self.timeout = timeout or int(os.getenv("RESEARCH_TIMEOUT", "60"))
 
     async def generate_initial_plan(
         self, topic: str, research_id: Optional[str] = None
@@ -46,7 +46,7 @@ class ResearchAgent:
         """
         Generates the initial research plan using the planning workflow.
         """
-        logger.info(f"Generating initial plan for topic: {topic}")
+        logger.info("Generating initial plan for topic: %s", topic)
 
         # Setup workflow with research_id for logging
         planning_workflow = InitialPlanningWorkflow(
@@ -64,12 +64,12 @@ class ResearchAgent:
                 return result
 
             logger.error(
-                f"Unexpected result type from planning workflow: {type(result)}"
+                "Unexpected result type from planning workflow: %s", type(result)
             )
             raise ValueError("Invalid plan generated")
 
         except Exception as e:
-            logger.error(f"Planning workflow failed: {e}")
+            logger.error("Planning workflow failed: %s", e)
             # Fallback
             return ResearchPlan(
                 current_hypothesis=f"Exploring {topic} (Fallback due to error)",
@@ -88,7 +88,7 @@ class ResearchAgent:
         Returns:
             Updated ResearchPlan with new workers, killed workers, and evolved queries
         """
-        logger.info(f"Running adaptive planning for iteration {state.iteration_count}")
+        logger.info("Running adaptive planning for iteration %s", state.iteration_count)
 
         # Format worker metrics with query history
         worker_metrics = []
@@ -143,12 +143,26 @@ class ResearchAgent:
             response = await llm.achat(messages)
             response_text = response.message.content
 
-            # Extract JSON from response (handle markdown code blocks)
-            json_match = re.search(
-                r"```json\s*(\{.*?\})\s*```", response_text, re.DOTALL
-            )
-            if json_match:
-                response_text = json_match.group(1)
+            # Extract JSON from response (robust brace-balancing)
+            start_idx = response_text.find("```json")
+            if start_idx != -1:
+                start_idx = response_text.find("{", start_idx)
+            else:
+                start_idx = response_text.find("{")
+
+            if start_idx != -1:
+                brace_count = 0
+                end_idx = -1
+                for i in range(start_idx, len(response_text)):
+                    if response_text[i] == "{":
+                        brace_count += 1
+                    elif response_text[i] == "}":
+                        brace_count -= 1
+                        if brace_count == 0:
+                            end_idx = i + 1
+                            break
+                if end_idx != -1:
+                    response_text = response_text[start_idx:end_idx]
 
             adaptive_plan = json.loads(response_text)
 
@@ -164,27 +178,24 @@ class ResearchAgent:
 
             # Update existing plan with adaptive decisions
             updated_plan = state.plan
+            decisions = adaptive_plan.get("decisions", {})
 
             # Add new workers from spawn decisions
-            for new_worker in adaptive_plan["decisions"].get("spawn_workers", []):
+            for new_worker in decisions.get("spawn_workers", []):
                 updated_plan.initial_workers.append(
                     InitialWorkerStrategy(
-                        worker_id=new_worker["worker_id"],
-                        strategy=new_worker["strategy"],
-                        strategy_description=new_worker["strategy_description"],
-                        example_queries=new_worker["queries"],
+                        worker_id=new_worker.get("worker_id", safe_uuid4()),
+                        strategy=new_worker.get("strategy", ""),
+                        strategy_description=new_worker.get("strategy_description", ""),
+                        example_queries=new_worker.get("queries", []),
                     )
                 )
 
             # Mark workers for killing
-            updated_plan.workers_to_kill = adaptive_plan["decisions"].get(
-                "kill_workers", []
-            )
+            updated_plan.workers_to_kill = decisions.get("kill_workers", [])
 
             # Update queries for existing workers
-            updated_plan.updated_queries = adaptive_plan["decisions"].get(
-                "update_queries", {}
-            )
+            updated_plan.updated_queries = decisions.get("update_queries", {})
 
             # Store gaps and reasoning
             updated_plan.gaps = [
@@ -198,13 +209,14 @@ class ResearchAgent:
             updated_plan.reasoning = adaptive_plan.get("reasoning", "")
 
             logger.info(
-                f"Adaptive planning complete: {len(updated_plan.workers_to_kill)} workers to kill, "
-                f"{len(adaptive_plan['decisions'].get('spawn_workers', []))} workers to spawn"
+                "Adaptive planning complete: %d workers to kill, %d workers to spawn",
+                len(updated_plan.workers_to_kill),
+                len(adaptive_plan["decisions"].get("spawn_workers", [])),
             )
 
             return updated_plan
 
         except Exception as e:
-            logger.error(f"Adaptive planning failed: {e}")
+            logger.error("Adaptive planning failed: %s", e)
             # Return existing plan unchanged on error
             return state.plan

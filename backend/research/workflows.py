@@ -24,7 +24,7 @@ class DeepResearchOrchestrator:
         """
         Executes the main research loop for a given topic.
         """
-        workflow.logger.info(f"Starting research on: {topic}")
+        workflow.logger.info("Starting research on: %s", topic)
 
         # 1. Initialize State
         state = ResearchState(topic=topic, status="running")
@@ -60,7 +60,7 @@ class DeepResearchOrchestrator:
         max_iters = config.MAX_ITERATIONS
 
         while state.iteration_count < max_iters:
-            workflow.logger.info(f"Starting iteration {state.iteration_count}")
+            workflow.logger.info("Starting iteration %s", state.iteration_count)
 
             # Identify active workers
             active_workers = [
@@ -114,7 +114,13 @@ class DeepResearchOrchestrator:
 
                 # Merge entities into global state
                 for item in res.get("extracted_data", []):
-                    canonical = item["canonical"]
+                    canonical = item.get("canonical")
+                    if not canonical:
+                        workflow.logger.warning(
+                            "Skipping entity with missing canonical name"
+                        )
+                        continue
+
                     if canonical not in state.known_entities:
                         state.known_entities[canonical] = Entity(
                             canonical_name=canonical,
@@ -137,14 +143,24 @@ class DeepResearchOrchestrator:
 
             state.iteration_count += 1
             global_novelty = total_new_entities / max(total_pages, 1)
-            log_msg = f"Iteration {state.iteration_count} completed. Found {total_new_entities} new entities. Global Novelty: {global_novelty:.2%}"
-            state.logs.append(log_msg)
-            workflow.logger.info(log_msg)
+            log_msg = (
+                "Iteration %s completed. Found %d new entities. Global Novelty: %.2f%%"
+            )
+            state.logs.append(
+                log_msg
+                % (state.iteration_count, total_new_entities, global_novelty * 100)
+            )
+            workflow.logger.info(
+                log_msg,
+                state.iteration_count,
+                total_new_entities,
+                global_novelty * 100,
+            )
 
             # --- Check Stopping Criteria ---
             if global_novelty < 0.05 and state.iteration_count > 1:
                 state.logs.append(
-                    f"Stopping: Low novelty detected ({global_novelty:.2%})"
+                    "Stopping: Low novelty detected (%.2f%%)" % (global_novelty * 100)
                 )
                 break
 
@@ -159,7 +175,7 @@ class DeepResearchOrchestrator:
             for worker_id in state.plan.workers_to_kill:
                 if worker_id in state.workers:
                     state.workers[worker_id].status = "DEAD_END"
-                    state.logs.append(f"Killed worker {worker_id} (exhausted)")
+                    state.logs.append("Killed worker %s (exhausted)" % worker_id)
 
             # Handle worker spawns
             for worker_cfg in state.plan.initial_workers:
@@ -172,7 +188,7 @@ class DeepResearchOrchestrator:
                         status="ACTIVE",
                     )
                     state.workers[w_state.id] = w_state
-                    state.logs.append(f"Spawned new worker {w_state.id}")
+                    state.logs.append("Spawned new worker %s" % w_state.id)
 
             # Update queries for existing workers
             for worker_id, new_queries in state.plan.updated_queries.items():
