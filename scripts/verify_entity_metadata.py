@@ -1,3 +1,8 @@
+"""
+Verifies entity metadata persistence in the database.
+Uses asyncio and DatabaseStateManager to mark an entity known and verify its attributes.
+"""
+
 import asyncio
 import sys
 import os

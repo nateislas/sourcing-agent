@@ -1,3 +1,8 @@
+"""
+Verifies evidence persistence and deduplication in the database and CSV export.
+Checks that multiple saves of the same entity with new evidence append correctly and that CSV export reflects the data.
+"""
+
 import asyncio
 import sys
 import os

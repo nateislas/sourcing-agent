@@ -4,6 +4,7 @@ Loads environment variables, initializes the database, and executes the research
 """
 
 import asyncio
+import re
 import sys
 import os
 import warnings
@@ -29,6 +30,14 @@ from backend.db.init_db import init_db
 from scripts.export_results import export_to_csv
 
 
+def sanitize_topic(topic: str) -> str:
+    """Sanitizes topic for use in filenames/directory names."""
+    # Replace non-alphanumeric with underscore, collapse multiple underscores
+    s = re.sub(r"[^\w\s-]", "_", topic).strip().lower()
+    s = re.sub(r"[-\s_]+", "_", s)
+    return s[:30]
+
+
 async def main():
     """Main execution loop for the research CLI."""
     # 1. Get topic from command line or interactive
@@ -44,11 +53,8 @@ async def main():
     print(f"\n--- Starting Research on: {topic} ---\n")
 
     # 1.5 Setup Run Logging
-    run_id = (
-        datetime.now().strftime("%Y%m%d_%H%M%S")
-        + "_"
-        + topic[:20].lower().replace(" ", "_")
-    )
+    sanitized_topic = sanitize_topic(topic)
+    run_id = datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + sanitized_topic
     run_dir = os.path.join(os.getcwd(), "logs", run_id)
     os.makedirs(run_dir, exist_ok=True)
 

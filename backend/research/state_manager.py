@@ -3,12 +3,15 @@ State Manager for Real-time Shared State.
 Handles deduplication of URLs and entities across distributed workers.
 """
 
+import logging
 from abc import ABC, abstractmethod
 from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from backend.db.connection import AsyncSessionLocal
 from backend.db.models import VisitedURL, EntityModel
+
+logger = logging.getLogger(__name__)
 
 
 class StateManager(ABC):
@@ -70,9 +73,9 @@ class DatabaseStateManager(StateManager):
             except IntegrityError:
                 await session.rollback()
                 return False
-            except Exception:
+            except Exception as e:
                 await session.rollback()
-                # If error is not integrity, assume failure to mark
+                logger.exception("Error marking URL %s as visited: %s", url, e)
                 return False
 
     async def is_entity_known(self, canonical_name: str) -> bool:
@@ -97,6 +100,9 @@ class DatabaseStateManager(StateManager):
             except IntegrityError:
                 await session.rollback()
                 return False
-            except Exception:
+            except Exception as e:
                 await session.rollback()
+                logger.exception(
+                    "Error marking entity %s as known: %s", canonical_name, e
+                )
                 return False

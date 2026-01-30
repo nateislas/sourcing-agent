@@ -1,3 +1,7 @@
+"""
+Script to export discovered entities and evidence from the database to a CSV file.
+"""
+
 import asyncio
 import csv
 import sys
@@ -5,7 +9,7 @@ import os
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-# Add project root to sys.path
+# Add project root to sys.path to ensure backend imports work
 sys.path.append(os.getcwd())
 
 from backend.db.connection import AsyncSessionLocal
