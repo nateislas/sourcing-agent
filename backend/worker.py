@@ -7,6 +7,7 @@ import asyncio
 import os
 from temporalio.client import Client, TLSConfig
 from temporalio.worker import Worker
+from temporalio.contrib.pydantic import pydantic_data_converter
 from backend.config import TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE, TASK_QUEUE
 from backend.research.workflows import DeepResearchOrchestrator
 from backend.research.activities import (
@@ -14,6 +15,8 @@ from backend.research.activities import (
     execute_worker_iteration,
     update_plan,
     save_state,
+    verify_entity,
+    analyze_gaps,
 )
 from backend.db.init_db import init_db
 
@@ -41,6 +44,7 @@ async def main():
         namespace=TEMPORAL_NAMESPACE,
         api_key=api_key,
         tls=tls_config,
+        data_converter=pydantic_data_converter,
     )
 
     # Initialize Database tables before starting worker
@@ -55,6 +59,8 @@ async def main():
             execute_worker_iteration,
             update_plan,
             save_state,
+            verify_entity,
+            analyze_gaps,
         ],
     )
 

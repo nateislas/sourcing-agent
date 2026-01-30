@@ -46,11 +46,14 @@ class PerplexitySearchClient:
         self.logger = get_session_logger(research_id) if research_id else None
 
     async def search(
-        self, queries: Union[str, List[str]], max_results: int = 5
+        self, queries: Union[str, List[str]], max_results: int = None
     ) -> List[SearchResult]:
         """
         Executes one or more search queries.
         """
+        if max_results is None:
+            max_results = int(os.getenv("PERPLEXITY_MAX_RESULTS", "5"))
+        
         # Perplexity SDK is synchronous, so we run in executor
         loop = asyncio.get_event_loop()
 
@@ -114,11 +117,16 @@ class TavilySearchClient:
         self.logger = get_session_logger(research_id) if research_id else None
 
     async def search(
-        self, query: str, max_results: int = 5, include_raw_content: bool = True
+        self, query: str, max_results: int = None, include_raw_content: bool = None
     ) -> List[SearchResult]:
         """
         Executes a search query and optionally includes raw markdown content.
         """
+        if max_results is None:
+            max_results = int(os.getenv("TAVILY_MAX_RESULTS", "5"))
+        if include_raw_content is None:
+            include_raw_content = os.getenv("TAVILY_INCLUDE_RAW_CONTENT", "true").lower() == "true"
+        
         loop = asyncio.get_event_loop()
 
         def _run_search():

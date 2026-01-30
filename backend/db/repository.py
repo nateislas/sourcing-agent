@@ -23,15 +23,15 @@ class ResearchRepository:
         """
         self.session = session
 
-    async def get_session(self, topic: str) -> Optional[ResearchState]:
+    async def get_session(self, session_id: str) -> Optional[ResearchState]:
         """
-        Loads a ResearchState from the database for a specific topic.
+        Loads a ResearchState from the database for a specific session.
         Args:
-            topic: The topic identifier for the session.
+            session_id: The unique session identifier.
         Returns:
             The loaded ResearchState or None if not found.
         """
-        stmt = select(ResearchSessionHelper).where(ResearchSessionHelper.topic == topic)
+        stmt = select(ResearchSessionHelper).where(ResearchSessionHelper.session_id == session_id)
         result = await self.session.execute(stmt)
         db_obj = result.scalar_one_or_none()
 
@@ -45,24 +45,48 @@ class ResearchRepository:
         # Fallback for old records without state_dump
         return ResearchState(topic=db_obj.topic, status=db_obj.status, logs=db_obj.logs)
 
+    async def list_sessions(self, limit: int = 10) -> list[dict]:
+        """
+        Lists recent research sessions.
+        """
+        stmt = (
+            select(ResearchSessionHelper)
+            .order_by(ResearchSessionHelper.updated_at.desc())
+            .limit(limit)
+        )
+        result = await self.session.execute(stmt)
+        sessions = result.scalars().all()
+        return [
+            {
+                "session_id": s.session_id,
+                "topic": s.topic,
+                "status": s.status,
+                "updated_at": s.updated_at,
+                "entities_count": s.state_dump.get("known_entities_count", 0) if s.state_dump else 0
+            }
+            for s in sessions
+        ]
+
     async def save_session(self, state: ResearchState):
         """
-        Persists a research session record. Upserts if topic already exists.
+        Persists a research session record. Upserts based on session_id.
         Args:
             state: The ResearchState to persist.
         """
         stmt = select(ResearchSessionHelper).where(
-            ResearchSessionHelper.topic == state.topic
+            ResearchSessionHelper.session_id == state.id
         )
         result = await self.session.execute(stmt)
         existing = result.scalar_one_or_none()
 
         if existing:
+            existing.topic = state.topic
             existing.status = state.status
             existing.logs = state.logs
             existing.state_dump = state.model_dump(mode="json")
         else:
             db_obj = ResearchSessionHelper(
+                session_id=state.id,
                 topic=state.topic,
                 status=state.status,
                 logs=state.logs,

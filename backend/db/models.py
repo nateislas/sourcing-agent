@@ -18,7 +18,8 @@ class ResearchSessionHelper(Base):
     __tablename__ = "research_sessions"
     # pylint: disable=too-few-public-methods
 
-    topic: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[str] = mapped_column(String, primary_key=True)
+    topic: Mapped[str] = mapped_column(String, index=True)  # Index for topic-based queries
     status: Mapped[str] = mapped_column(String, default="initialized")
     logs: Mapped[List[str]] = mapped_column(JSON, default=list)
     # Serialized version of the full ResearchState Pydantic model

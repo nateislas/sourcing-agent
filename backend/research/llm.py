@@ -4,14 +4,19 @@ Provides a configured LlamaIndex Google GenAI instance.
 """
 
 import os
+from typing import Any
 from llama_index.llms.google_genai import GoogleGenAI
+from llama_index.core.program import LLMTextCompletionProgram
 
 
-def get_llm(model_name: str = "models/gemini-1.5-flash"):
+def get_llm(model_name: str = None):
     """
     Returns a configured LlamaIndex Google GenAI instance.
     The API key is retrieved from GEMINI_API_KEY or GOOGLE_API_KEY environment variables.
     """
+    if model_name is None:
+        model_name = os.getenv("DEFAULT_LLM_MODEL", "gemini-1.5-flash")
+    
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
         raise ValueError(
@@ -32,36 +37,28 @@ class LLMClient:
     Supports structured output generation.
     """
 
-    def __init__(self, model_name: str = "gemini-2.5-flash-lite"):
+    def __init__(self, model_name: str = None):
+        if model_name is None:
+            model_name = os.getenv("DEFAULT_LLM_MODEL", "gemini-2.5-flash-lite")
         self.llm = get_llm(model_name)
 
-    async def generate(self, prompt: str, response_model=None):
+    async def generate(self, prompt: str, response_model: Any = None):
         """
         Generates a response from the LLM.
         If response_model is provided, attempts to generate structured JSON matching the Pydantic model.
         """
         if response_model:
-            # Use LlamaIndex's structured prediction capabilities
-            # Currently using `as_structured_llm` if available, or prompt engineering + Pydantic validation
             try:
-                sllm = self.llm.as_structured_llm(response_model)
-                response = await sllm.acomplete(prompt)
-                # The response object from structured LLM should be the Pydantic object directly
-                # However, LlamaIndex abstraction might return a CompletionResponse with .raw which is the object
-                # Let's verify standard LlamaIndex behavior:
-                # sllm.complete returns the Pydantic object
-                return response.raw
-            except Exception:
-                # Fallback to direct prompt instruction
-                # (Simple implementation for now)
-                from llama_index.core.program import LLMTextCompletionProgram
-                
+                # Use LlamaIndex Text Completion Program for structured output
                 program = LLMTextCompletionProgram.from_defaults(
                     output_cls=response_model,
                     llm=self.llm,
                     prompt_template_str="{prompt}"
                 )
                 return await program.acall(prompt=prompt)
+            except Exception as e:
+                # Simple fallback or logging could go here
+                raise e
         else:
             response = await self.llm.acomplete(prompt)
             return response.text

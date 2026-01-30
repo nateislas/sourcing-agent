@@ -6,6 +6,8 @@ services:
       - .:/app
     env_file:
       - .env
+    environment:
+      - PYTHONUNBUFFERED=1
     command: python backend/worker.py
     restart: always
 

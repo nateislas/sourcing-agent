@@ -3,10 +3,11 @@ Verification Logic for the Deep Research Application.
 Handles strict constraint checking, gap analysis, and final asset classification.
 """
 
+import os
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
-from backend.research.llm import LLMClient
 from backend.research.state import Entity
+from backend.research.llm import LLMClient
 
 class VerificationResult(BaseModel):
     """Result of the verification process for a single entity."""
@@ -21,7 +22,9 @@ class VerificationAgent:
     """
     Agent responsible for verifying entities against hard constraints and identifying gaps.
     """
-    def __init__(self, model_name: str = "gemini-2.5-flash-lite"):
+    def __init__(self, model_name: str = None):
+        if model_name is None:
+            model_name = os.getenv("VERIFICATION_MODEL", "gemini-2.5-flash-lite")
         self.llm = LLMClient(model_name=model_name)
 
     async def verify_entity(self, entity: Entity, constraints: Dict[str, Any]) -> VerificationResult:

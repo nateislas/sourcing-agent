@@ -7,6 +7,8 @@ import os
 import json
 from typing import Dict, Any, Optional
 from datetime import datetime
+import httpx
+import tempfile
 
 from crawl4ai import (
     AsyncWebCrawler,
@@ -141,8 +143,6 @@ class Crawl4AIExtractor:
 
         entities = []
         links = []
-        is_pdf_content = False
-        raw_content = None
 
         try:
             async with AsyncWebCrawler(config=browser_config) as crawler:
@@ -174,9 +174,6 @@ class Crawl4AIExtractor:
                 if is_pdf_url or is_pdf_content_marker:
                     if self.logger:
                         self.logger.info("PDF detected at %s. Downloading binary for LlamaExtract.", url)
-                    
-                    import httpx
-                    import tempfile
                     
                     # Create a temporary file to store the PDF
                     fd, temp_path = tempfile.mkstemp(suffix=".pdf")

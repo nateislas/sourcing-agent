@@ -36,7 +36,7 @@ class DeepResearchOrchestrator:
         # 2. Initial Planning
         state.plan = await workflow.execute_activity(
             activities.generate_initial_plan,
-            topic,
+            args=[topic, state.id],
             start_to_close_timeout=timedelta(seconds=60),
         )
         state.logs.append(f"Plan generated: {state.plan.current_hypothesis}")
@@ -132,24 +132,28 @@ class DeepResearchOrchestrator:
                         continue
 
                     if canonical not in state.known_entities:
-                        state.known_entities[canonical] = Entity(
+                        # Create new entity WITH aliases and evidence
+                        new_entity = Entity(
                             canonical_name=canonical,
                             mention_count=1,
                             drug_class=item.get("drug_class"),
                             clinical_phase=item.get("clinical_phase"),
                         )
+                        new_entity.aliases.add(item["alias"])
+                        new_entity.evidence.extend(item["evidence"])
+                        state.known_entities[canonical] = new_entity
                     else:
+                        # Update existing entity
                         entity = state.known_entities[canonical]
                         entity.mention_count += 1
                         if not entity.drug_class:
                             entity.drug_class = item.get("drug_class")
                         if not entity.clinical_phase:
                             entity.clinical_phase = item.get("clinical_phase")
-
-                    # Update aliases and evidence
-                    entity = state.known_entities[canonical]
-                    entity.aliases.add(item["alias"])
-                    entity.evidence.extend(item["evidence"])
+                        
+                        # Add new aliases and evidence to existing entity
+                        entity.aliases.add(item["alias"])
+                        entity.evidence.extend(item["evidence"])
 
             state.iteration_count += 1
             global_novelty = total_new_entities / max(total_pages, 1)
@@ -211,6 +215,73 @@ class DeepResearchOrchestrator:
                 state,
                 start_to_close_timeout=timedelta(seconds=5),
             )
+
+        # 4. Verification Phase
+        state.status = "verification_pending"
+        state.logs.append(f"Starting verification phase for {len(state.known_entities)} entities.")
+        await workflow.execute_activity(
+            activities.save_state, state, start_to_close_timeout=timedelta(seconds=5)
+        )
+
+        verification_tasks = []
+        constraints = state.plan.query_analysis
+        for entity in state.known_entities.values():
+            verification_tasks.append(
+                workflow.execute_activity(
+                    activities.verify_entity,
+                    args=[entity.model_dump(), constraints],
+                    start_to_close_timeout=timedelta(minutes=2),
+                )
+            )
+
+        if verification_tasks:
+            verification_results = await asyncio.gather(*verification_tasks)
+            
+            # Update state with verification results
+            uncertain_entities = []
+            for res in verification_results:
+                canonical = res.get("canonical_name")
+                if canonical in state.known_entities:
+                    ent = state.known_entities[canonical]
+                    ent.verification_status = res.get("status", "UNCERTAIN")
+                    ent.rejection_reason = res.get("rejection_reason")
+                    ent.confidence_score = res.get("confidence", 0.0)
+                    
+                    if ent.verification_status == "UNCERTAIN":
+                        uncertain_entities.append(ent)
+
+            # 5. Gap Filling Phase (Optional)
+            if uncertain_entities:
+                state.logs.append(f"Found {len(uncertain_entities)} uncertain entities. Starting gap analysis.")
+                gap_filling_tasks = []
+                for ent in uncertain_entities:
+                    # Analyze gaps to get queries
+                    queries = await workflow.execute_activity(
+                        activities.analyze_gaps,
+                        args=[ent.model_dump(), {"status": "UNCERTAIN", "missing_fields": []}],
+                        start_to_close_timeout=timedelta(seconds=30)
+                    )
+                    
+                    if queries:
+                        # Create a targeted worker iteration for gap filling
+                        gap_worker = WorkerState(
+                            id=f"gap-fill-{ent.canonical_name[:20]}",
+                            research_id=state.id,
+                            strategy="gap_filling",
+                            queries=queries,
+                            status="ACTIVE"
+                        )
+                        gap_filling_tasks.append(
+                            workflow.execute_activity(
+                                activities.execute_worker_iteration,
+                                gap_worker,
+                                start_to_close_timeout=timedelta(minutes=5)
+                            )
+                        )
+                
+                if gap_filling_tasks:
+                    await asyncio.gather(*gap_filling_tasks)
+                    state.logs.append("Gap filling phase complete.")
 
         state.status = "completed"
         await workflow.execute_activity(

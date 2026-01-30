@@ -11,12 +11,12 @@ from temporalio import activity
 from backend.db.connection import AsyncSessionLocal
 from backend.db.repository import ResearchRepository
 from backend.research.agent import ResearchAgent
-from backend.research.state import ResearchState, ResearchPlan, WorkerState
 from backend.research.client_search import PerplexitySearchClient
 from backend.research.extraction import EntityExtractor
-from backend.research.extraction import EntityExtractor
 from backend.research.state_manager import DatabaseStateManager
-from backend.research.verification import VerificationAgent, VerificationResult
+from backend.research.extraction_crawl4ai import Crawl4AIExtractor
+from backend.research.state import Entity, ResearchState, ResearchPlan, WorkerState
+from backend.research.verification import VerificationAgent
 
 
 
@@ -74,29 +74,97 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
         query_index = (
             iteration_index % len(worker_state.queries) if worker_state.queries else 0
         )
-        query = (
-            worker_state.queries[query_index]
-            if worker_state.queries
-            else worker_state.strategy
-        )
+        
+        # Get query configuration (can be string or dict with parameters)
+        query_config = worker_state.queries[query_index] if worker_state.queries else worker_state.strategy
+        
+        if isinstance(query_config, dict):
+            query = query_config.get("query", worker_state.strategy)
+            query_params = query_config.get("search_parameters", {})
+        else:
+            query = query_config
+            query_params = {}
 
+        # Adaptive search depth based on query's historical performance
+        query_stats = worker_state.query_performance.get(query, {})
+        query_novelty = query_stats.get("novelty_rate", 0.0)
+        
+        if query_novelty > 0.15:  # High novelty query
+            default_max_results = int(os.getenv("PERPLEXITY_MAX_RESULTS_HIGH", "20"))
+        elif query_novelty > 0.05:  # Medium novelty query
+            default_max_results = int(os.getenv("PERPLEXITY_MAX_RESULTS_MEDIUM", "10"))
+        else:  # Low novelty or new query (no history)
+            default_max_results = int(os.getenv("PERPLEXITY_MAX_RESULTS", "5"))
+        
+        max_results = query_params.get("max_results", default_max_results)
+        
+        # Random engine selection (50/50 Perplexity vs Tavily)
+        import random
+        from backend.research.client_search import TavilySearchClient
+        
+        search_engine = random.choice(["perplexity", "tavily"])
+        
+        safe_get_logger().info(
+            "Worker %s using %s for query: %s", 
+            worker_state.id, search_engine, query
+        )
+        
+        if search_engine == "perplexity":
+            search_results = await perp_client.search(
+                query=query,
+                max_results=max_results,
+                country=query_params.get("country"),
+                search_domain_filter=query_params.get("perplexity_domain_filter"),
+                search_language_filter=query_params.get("perplexity_language_filter"),
+            )
+        else:  # tavily
+            tavily_client = TavilySearchClient()
+            search_results = await tavily_client.search(
+                query=query,
+                max_results=max_results,
+                search_depth=query_params.get("tavily_search_depth", "basic"),
+                topic=query_params.get("tavily_topic", "general"),
+                time_range=query_params.get("tavily_time_range"),
+                country=query_params.get("country"),
+                include_domains=query_params.get("tavily_include_domains"),
+                exclude_domains=query_params.get("tavily_exclude_domains"),
+                include_raw_content=True,  # Always get content
+            )
+        
         # Track query execution in history
         query_record = {
             "query": query,
+            "engine": search_engine,
             "iteration": iteration_index,
-            "results_count": 0,
+            "results_count": len(search_results),
             "new_entities": 0,
+            "parameters": query_params,
         }
-
-        search_results = await perp_client.search(query, max_results=5)
-        query_record["results_count"] = len(search_results)
 
         # URLs to process in this iteration
         url_queue = [res.url for res in search_results]
 
-        # 2. Add from personal queue if budget allows
-        while len(url_queue) < page_budget and worker_state.personal_queue:
-            url_queue.append(worker_state.personal_queue.pop(0))
+        # 2. Add from personal queue, preferring novel domains
+        
+        novel_domain_links = []
+        same_domain_links = []
+        
+        for link in worker_state.personal_queue:
+            link_domain = urlparse(link).netloc
+            if link_domain not in worker_state.explored_domains:
+                novel_domain_links.append(link)
+            else:
+                same_domain_links.append(link)
+        
+        # Fill queue with novel domains first, then same domains
+        priority_links = novel_domain_links + same_domain_links
+        idx = 0
+        while len(url_queue) < page_budget and idx < len(priority_links):
+            url_queue.append(priority_links[idx])
+            idx += 1
+        
+        # Remove added links from personal queue
+        worker_state.personal_queue = [l for l in worker_state.personal_queue if l not in url_queue]
 
         # 3. Fetch & Extract Phase
         for current_url in url_queue:
@@ -115,9 +183,14 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
             await state_manager.mark_url_visited(
                 current_url, research_id=worker_state.research_id
             )
+            
+            # Track domain for diversity
+            domain = urlparse(current_url).netloc
+            worker_state.explored_domains.add(domain)
 
             safe_get_logger().info(
-                "Worker %s processing URL: %s", worker_state.id, current_url
+                "Worker %s processing URL: %s (domain: %s, unique domains: %d)",
+                worker_state.id, current_url, domain, len(worker_state.explored_domains)
             )
 
             # Smart Content Routing:
@@ -128,7 +201,6 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
             try:
                 # Step 1: Try Crawl4AI (works for most cases)
                 safe_get_logger().info("Attempting Crawl4AI for %s", current_url)
-                from backend.research.extraction_crawl4ai import Crawl4AIExtractor
 
                 crawl_extractor = Crawl4AIExtractor(
                     research_id=worker_state.research_id
@@ -192,6 +264,38 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
         # Update query record with results
         query_record["new_entities"] = globally_new_count
         worker_state.query_history.append(query_record)
+        
+        # Track search engine performance
+        worker_state.search_engine_history.append({
+            "query": query,
+            "engine": search_engine,
+            "results": len(url_queue),
+            "new_entities": globally_new_count,
+            "parameters": query_params,
+        })
+        
+        # Update query performance tracking
+        if query not in worker_state.query_performance:
+            worker_state.query_performance[query] = {
+                "total_pages": 0,
+                "new_entities": 0,
+                "novelty_rate": 0.0,
+                "engines_used": {},  # Track performance per engine
+            }
+        
+        perf = worker_state.query_performance[query]
+        perf["total_pages"] += pages_fetched
+        perf["new_entities"] += globally_new_count
+        perf["novelty_rate"] = perf["new_entities"] / max(perf["total_pages"], 1)
+        
+        # Track per-engine performance for this query
+        if "engines_used" not in perf:
+            perf["engines_used"] = {}
+        if search_engine not in perf["engines_used"]:
+            perf["engines_used"][search_engine] = {"pages": 0, "entities": 0}
+        
+        perf["engines_used"][search_engine]["pages"] += pages_fetched
+        perf["engines_used"][search_engine]["entities"] += globally_new_count
 
         novelty_rate = globally_new_count / max(pages_fetched, 1)
 
@@ -262,7 +366,6 @@ async def verify_entity(entity_data: dict, constraints: dict) -> dict:
 
     # Reconstruct Entity object from dict
     # We use Entity.model_validate or similar if Pydantic v2, or just constructor
-    from backend.research.state import Entity
     entity = Entity(**entity_data)
 
     agent = VerificationAgent()
@@ -298,4 +401,3 @@ async def analyze_gaps(entity_data: dict, verification_result: dict) -> list[str
         
     safe_get_logger().info("Generated %d gap-filling queries for %s", len(queries), canonical_name)
     return queries
-
