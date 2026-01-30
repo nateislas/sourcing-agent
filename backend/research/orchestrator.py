@@ -165,7 +165,28 @@ class DeepResearchWorkflow(Workflow):
                 total_new_entities += res.new_entities
                 total_pages += res.pages_fetched
 
-                # Process Discovered Links
+                # Update Personal Queue
+                # 1. Remove consumed URLs (FIFO)
+                consumed_urls = getattr(res, "consumed_urls", [])
+                # Filter out consumed URLs from the personal queue
+                # Note: This simple filtering assumes unique URLs in queue or FIFO consistency.
+                # A more robust approach might be to pop N items if we knew exactly N were popped from the front.
+                # Given logic in activity: `url_queue.append(worker_state.personal_queue.pop(0))`,
+                # the activity effectively consumed the *head* of the queue passed to it.
+                # BUT: The activity operates on a *copy* of the state.
+                # So we simply need to remove the URLs that were in the queue.
+
+                # However, since `consumed_urls` includes both search results AND personal queue items,
+                # we should only remove those that were actually IN the personal queue.
+                # Optimization: Rebuild queue excluding consumed items.
+                if consumed_urls:
+                    w_state.personal_queue = [
+                        url
+                        for url in w_state.personal_queue
+                        if url not in consumed_urls
+                    ]
+
+                # 2. Add Discovered Links
                 for link in getattr(res, "discovered_links", []):
                     if link not in state.visited_urls:
                         state.visited_urls.add(link)
