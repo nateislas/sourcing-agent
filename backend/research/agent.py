@@ -103,6 +103,9 @@ class ResearchAgent:
                     "new_entities": worker.new_entities,
                     "novelty_rate": worker.new_entities / max(worker.pages_fetched, 1),
                     "query_history": worker.query_history,
+                    "query_performance": worker.query_performance,
+                    "unique_domains": len(worker.explored_domains),
+                    "search_engine_history": worker.search_engine_history,
                 }
             )
 

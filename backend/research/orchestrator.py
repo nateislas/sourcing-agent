@@ -4,6 +4,7 @@ Manages the iterative research process, workers, and state aggregation.
 """
 
 import os
+import re
 from typing import List, Optional, Union
 
 from llama_index.core.workflow import (
@@ -19,11 +20,8 @@ from backend.research.events import (
     PlanCreatedEvent,
     WorkerStartEvent,
     WorkerResultEvent,
-    WorkerStartEvent,
-    WorkerResultEvent,
     IterationCompleteEvent,
     VerificationStartEvent,
-    VerifyEntityEvent,
     VerifyEntityEvent,
     VerificationResultEvent,
     GapFillEvent,
@@ -433,7 +431,6 @@ class DeepResearchWorkflow(Workflow):
         # Create a temporary worker state for this specific task
         worker_id = f"gap-fill-{ev.entity.get('canonical_name')}"[:30]
         # Clean ID
-        import re
         worker_id = re.sub(r"[^a-zA-Z0-9-]", "", worker_id)
         
         state: ResearchState = await ctx.store.get("state")

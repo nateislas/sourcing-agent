@@ -1,0 +1,166 @@
+/* Clean, Professional UI following WCAG accessibility guidelines */
+
+:root {
+    --bg-primary: #f8f9fa;
+    --bg-surface: #ffffff;
+    --border-color: #dee2e6;
+    --text-primary: #212529;
+    --text-secondary: #495057;
+
+    /* Accessible Status Colors (High Contrast for Light Mode) */
+    --status-active: #2e7d32;
+    /* Darker Green */
+    --status-productive: #1565c0;
+    /* Darker Blue */
+    --status-declining: #f9a825;
+    /* Darker Yellow/Orange */
+    --status-dead: #c62828;
+    /* Darker Red */
+    --accent: #6200ee;
+    /* Stronger Purple */
+}
+
+/* Reset and Base */
+.stApp {
+    background-color: var(--bg-primary);
+    color: var(--text-secondary);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* Reduce top padding */
+.block-container {
+    padding-top: 1rem !important;
+    padding-bottom: 0rem !important;
+}
+
+[data-testid="stHeader"] {
+    background: rgba(0, 0, 0, 0) !important;
+}
+
+/* Plain, Functional Cards */
+.glass-card {
+    background: var(--bg-surface);
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+}
+
+/* Worker Status Indicators - Vertical bar only, no flashy backgrounds */
+.worker-card {
+    border-top: 4px solid var(--border-color);
+    background: var(--bg-surface);
+}
+
+.worker-active {
+    border-top-color: var(--status-active);
+}
+
+.worker-productive {
+    border-top-color: var(--status-productive);
+}
+
+.worker-declining {
+    border-top-color: var(--status-declining);
+}
+
+.worker-dead {
+    border-top-color: var(--status-dead);
+}
+
+/* Terminal Styling - Professional light mode console */
+.terminal-container {
+    background-color: #ffffff;
+    border-radius: 4px;
+    padding: 1rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    font-size: 0.85rem;
+    height: 350px;
+    overflow-y: auto;
+    border: 1px solid var(--border-color);
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.terminal-line {
+    margin: 4px 0;
+    line-height: 1.4;
+    border-bottom: 1px solid #f1f3f5;
+}
+
+.terminal-timestamp {
+    color: #adb5bd;
+    margin-right: 12px;
+    font-size: 0.75rem;
+}
+
+.terminal-info {
+    color: var(--status-productive);
+}
+
+.terminal-success {
+    color: var(--status-active);
+}
+
+.terminal-warning {
+    color: var(--status-declining);
+}
+
+/* Clean Headings - No gradients, just bold white text */
+h1,
+h2,
+h3 {
+    color: var(--text-primary) !important;
+    font-weight: 600 !important;
+    letter-spacing: -0.01em;
+    margin-top: 0 !important;
+    margin-bottom: 1rem !important;
+    padding-top: 0 !important;
+    background: none !important;
+    -webkit-background-clip: initial !important;
+    background-clip: initial !important;
+    -webkit-text-fill-color: initial !important;
+}
+
+/* Links */
+.source-link {
+    display: block;
+    padding: 10px;
+    color: var(--status-productive);
+    text-decoration: underline;
+    font-size: 0.95rem;
+}
+
+.source-link:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+/* Scrollable Container */
+.scroll-container {
+    display: block !important;
+    max-height: 350px !important;
+    overflow-y: auto !important;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    padding: 10px;
+    background: var(--bg-surface);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-primary);
+}
+
+::-webkit-scrollbar-thumb {
+    background: #ced4da;
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #adb5bd;
+}
