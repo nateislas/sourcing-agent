@@ -33,6 +33,7 @@ class WorkerResultEvent(Event):
     novelty_rate: float  # new_entities / total_pages_this_iteration
     status: str  # Classification: PRODUCTIVE, DECLINING, EXHAUSTED, DEAD_END
     extracted_data: List[dict] = []  # List of found entities/aliases
+    discovered_links: List[str] = []  # URLs found for further exploration
 
 
 class IterationCompleteEvent(Event):

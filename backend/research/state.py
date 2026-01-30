@@ -8,6 +8,24 @@ import uuid
 from typing import List, Dict, Set, Literal, Any, Optional
 from pydantic import BaseModel, Field
 
+try:
+    from temporalio import workflow
+except ImportError:
+    workflow = None
+
+
+def safe_uuid4() -> str:
+    """Returns a UUID4 string."""
+    return str(uuid.uuid4())
+
+
+def safe_getenv(key: str, default: Any = None) -> Any:
+    """Returns an environment variable, handling Temporal's sandbox restrictions."""
+    # In sandbox, accessing os.environ might be restricted
+    # os.getenv is generally safer if it's marked as pass-through
+    return os.getenv(key, default)
+
+
 # --- Core Entity Definitions ---
 
 
@@ -42,7 +60,8 @@ class Entity(BaseModel):
 class WorkerState(BaseModel):
     """Tracks the state and metrics of an individual search worker."""
 
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    id: str = Field(default_factory=safe_uuid4)
+
     research_id: Optional[str] = None
     strategy: str  # e.g., "broad_english", "specific_code_name"
     queries: List[str] = Field(default_factory=list)  # Actual search queries
@@ -54,6 +73,11 @@ class WorkerState(BaseModel):
     new_entities: int = 0
     # URLs discovered by this worker to be visited
     personal_queue: List[str] = Field(default_factory=list)
+    # Query history tracking
+    query_history: List[Dict[str, Any]] = Field(
+        default_factory=list, description="History of queries executed by this worker"
+    )
+    # Each entry: {"query": str, "iteration": int, "results_count": int, "new_entities": int}
 
 
 # --- Strategic Planning ---
@@ -68,12 +92,12 @@ class Gap(BaseModel):
 
 
 class InitialWorkerStrategy(BaseModel):
-    worker_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    worker_id: str = Field(default_factory=safe_uuid4)
     strategy: str
     strategy_description: str
     example_queries: List[str]
     page_budget: int = Field(
-        default_factory=lambda: int(os.getenv("WORKER_PAGE_BUDGET", 50))
+        default_factory=lambda: int(safe_getenv("WORKER_PAGE_BUDGET", 50))
     )
     status: Literal["ACTIVE"] = "ACTIVE"
 
@@ -92,7 +116,7 @@ class ResearchPlan(BaseModel):
         default_factory=list, description="Initial spawn configuration"
     )
     budget_reserve_pct: float = Field(
-        default_factory=lambda: float(os.getenv("BUDGET_RESERVE_PCT", 0.6)),
+        default_factory=lambda: float(safe_getenv("BUDGET_RESERVE_PCT", 0.6)),
         description="Percentage of budget to reserve for adaptive phase",
     )
     reasoning: str = Field(
@@ -105,6 +129,15 @@ class ResearchPlan(BaseModel):
     gaps: List[Gap] = Field(default_factory=list)
     next_steps: List[str] = Field(default_factory=list)
 
+    # Adaptive planning outputs
+    workers_to_kill: List[str] = Field(
+        default_factory=list, description="Worker IDs to kill this iteration"
+    )
+    updated_queries: Dict[str, List[str]] = Field(
+        default_factory=dict,
+        description="New queries for existing workers {worker_id: [queries]}",
+    )
+
 
 # --- Global Orchestrator State ---
 
@@ -112,7 +145,8 @@ class ResearchPlan(BaseModel):
 class ResearchState(BaseModel):
     """Manages the global state of the research process, including entities and workers."""
 
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    id: str = Field(default_factory=safe_uuid4)
+
     topic: str
     status: Literal["initialized", "running", "completed", "failed"] = "initialized"
 
@@ -138,3 +172,14 @@ class ResearchState(BaseModel):
 
     iteration_count: int = 0
     logs: List[str] = Field(default_factory=list)
+
+    # Discovery tracking for gap detection
+    discovered_code_names: Set[str] = Field(
+        default_factory=set, description="Code names found in entity aliases"
+    )
+    discovered_companies: Set[str] = Field(
+        default_factory=set, description="Company names mentioned in entity context"
+    )
+    high_value_urls: List[str] = Field(
+        default_factory=list, description="URLs discovered but not yet explored"
+    )

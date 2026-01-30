@@ -14,6 +14,7 @@ from llama_index.core.workflow import (
 from backend.research.state import ResearchPlan, InitialWorkerStrategy
 from backend.research.llm import get_llm
 from backend.research.logging_utils import get_session_logger, log_api_call
+from backend.research.prompts import INITIAL_PLANNING_PROMPT
 
 
 class InitialPlanningWorkflow(Workflow):
@@ -42,9 +43,6 @@ class InitialPlanningWorkflow(Workflow):
         topic = ev.get("topic")
         if not topic:
             raise ValueError("Missing topic for planning")
-
-        # Import the full prompt from prompts.py
-        from backend.research.prompts import INITIAL_PLANNING_PROMPT
 
         # The prompt expects {query}
         prompt_str = INITIAL_PLANNING_PROMPT.format(query=topic)

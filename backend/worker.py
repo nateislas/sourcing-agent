@@ -9,7 +9,12 @@ from temporalio.client import Client, TLSConfig
 from temporalio.worker import Worker
 from backend.config import TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE, TASK_QUEUE
 from backend.research.workflows import DeepResearchOrchestrator
-from backend.research.activities import search, fetch_page, extract_entities, save_state
+from backend.research.activities import (
+    generate_initial_plan,
+    execute_worker_iteration,
+    update_plan,
+    save_state,
+)
 from backend.db.init_db import init_db
 
 
@@ -45,7 +50,12 @@ async def main():
         client,
         task_queue=TASK_QUEUE,
         workflows=[DeepResearchOrchestrator],
-        activities=[search, fetch_page, extract_entities, save_state],
+        activities=[
+            generate_initial_plan,
+            execute_worker_iteration,
+            update_plan,
+            save_state,
+        ],
     )
 
     print("Worker started...")
