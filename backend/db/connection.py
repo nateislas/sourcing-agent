@@ -2,13 +2,9 @@
 Database connection configuration using SQLAlchemy AsyncEngine.
 """
 
-import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
-
-# Get DB URL from env, default to sqlite for local dev (users should provide PG url)
-# Example PG URL: postgresql+asyncpg://user:password@localhost/dbname
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./test.db")
+from backend.config import DATABASE_URL
 
 
 # pylint: disable=too-few-public-methods

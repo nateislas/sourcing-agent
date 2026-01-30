@@ -4,6 +4,7 @@ Defines the communication messages between workflow steps.
 """
 
 from typing import List
+from pydantic import Field
 from llama_index.core.workflow import Event
 from backend.research.state import ResearchPlan, WorkerState
 
@@ -32,7 +33,12 @@ class WorkerResultEvent(Event):
     new_entities: int  # Novel entities not previously known
     novelty_rate: float  # new_entities / total_pages_this_iteration
     status: str  # Classification: PRODUCTIVE, DECLINING, EXHAUSTED, DEAD_END
-    extracted_data: List[dict] = []  # List of found entities/aliases
+    extracted_data: List[dict] = Field(
+        default_factory=list
+    )  # List of found entities/aliases
+    discovered_links: List[str] = Field(
+        default_factory=list
+    )  # URLs found for further exploration
 
 
 class IterationCompleteEvent(Event):

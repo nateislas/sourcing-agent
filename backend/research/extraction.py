@@ -1,4 +1,12 @@
+"""
+Extraction logic for the Deep Research Application.
+Handles web content cleaning, link discovery, and structured entity extraction.
+"""
+
 import os
+import io
+from datetime import datetime
+from urllib.parse import urljoin
 from typing import List, Optional
 from bs4 import BeautifulSoup
 from trafilatura import extract as trafilatura_extract
@@ -33,6 +41,7 @@ class DrugExtractionSchema(BaseModel):
     @field_validator("aliases", "trial_ids", mode="before")
     @classmethod
     def ensure_list(cls, v):
+        """Ensures that the input is a list, returning an empty list if None."""
         if v is None:
             return []
         return v
@@ -47,7 +56,7 @@ class WebExtractor:
     def __init__(self):
         pass
 
-    async def extract_content(self, html_or_markdown: str, url: str) -> str:
+    async def extract_content(self, html_or_markdown: str, _url: str) -> str:
         """
         Cleans content. If it looks like raw HTML, use trafilatura.
         """
@@ -69,8 +78,6 @@ class WebExtractor:
                 continue
 
             if href.startswith("/"):
-                from urllib.parse import urljoin
-
                 href = urljoin(base_url, href)
             elif not href.startswith("http"):
                 continue
@@ -99,9 +106,6 @@ class LlamaExtractionClient:
 
     async def close(self):
         """Closes the underlying client."""
-        # AsyncLlamaCloud doesn't have an explicit close in the current SDK version shown,
-        # but managing instances properly is good.
-        pass
 
     async def _get_or_create_agent(self):
         """Ensures an extraction agent exists for drug discovery."""
@@ -151,9 +155,6 @@ class LlamaExtractionClient:
 
         agent_id = await self._get_or_create_agent()
 
-        # Upload or provide text
-        import io
-
         if os.path.exists(text_or_file_path):
             file_obj = await self.client.files.create(
                 file=text_or_file_path, purpose="extract"
@@ -186,7 +187,7 @@ class LlamaExtractionClient:
         data = result.data
         if isinstance(data, dict):
             return [DrugExtractionSchema(**data)]
-        elif isinstance(data, list):
+        if isinstance(data, list):
             return [DrugExtractionSchema(**item) for item in data]
         return []
 
@@ -200,53 +201,50 @@ class EntityExtractor:
         self.llama_client = LlamaExtractionClient(research_id=research_id)
 
     async def close(self):
+        """Closes the underlying client."""
         await self.llama_client.close()
 
-    async def extract_entities(self, text: str, source_url: str) -> List[dict]:
+    async def extract_entities(
+        self, text: str, source_url: str, raw_html: Optional[str] = None
+    ) -> dict:
         """
-        Extracts structured drug data and returns in a format orchestrator understands.
+        Extracts structured drug data and returns entities and discovered links.
         """
-        results = []
+        entities = []
+        links = []
 
-        # Power up LlamaExtract
+        # 1. Structure Entity Extraction
         structured_findings = await self.llama_client.extract_structured_data(text)
 
         for drug in structured_findings:
-            # Create evidence for each finding
-            # For simplicity, we use a snippet of the first 500 chars if text is long
             snippet = EvidenceSnippet(
                 source_url=source_url,
                 content=text[:500] if len(text) > 500 else text,
-                timestamp="2026-01-29T16:00:00Z",
+                timestamp=datetime.utcnow().isoformat() + "Z",
             )
 
-            # Canonical entry
-            results.append(
-                {
-                    "canonical": drug.canonical_name,
-                    "alias": drug.canonical_name,
-                    "drug_class": drug.drug_class,
-                    "clinical_phase": drug.clinical_phase,
-                    "evidence": [snippet],
-                }
-            )
-
-            # Alias entries
-            for alias in drug.aliases:
-                results.append(
+            # Canonical and Aliases
+            all_names = [drug.canonical_name] + (drug.aliases or [])
+            for name in all_names:
+                entities.append(
                     {
                         "canonical": drug.canonical_name,
-                        "alias": alias,
+                        "alias": name,
                         "drug_class": drug.drug_class,
                         "clinical_phase": drug.clinical_phase,
                         "evidence": [snippet],
                     }
                 )
 
-            # Trial entries (treating trials as distinct canonical names for discovery)
-            for trial in drug.trial_ids:
-                results.append(
+            # Trials
+            for trial in drug.trial_ids or []:
+                entities.append(
                     {"canonical": trial, "alias": trial, "evidence": [snippet]}
                 )
 
-        return results
+        # 2. Link Discovery (if raw HTML provided)
+        if raw_html:
+            web_extractor = WebExtractor()
+            links = web_extractor.discover_links(raw_html, source_url)
+
+        return {"entities": entities, "links": links}

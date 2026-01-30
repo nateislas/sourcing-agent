@@ -131,3 +131,85 @@ Output as JSON matching this schema:
 - Reserve 50-70% budget for adaptive spawning during execution
 - Query templates should use actual synonyms generated, not placeholders
 """
+
+ADAPTIVE_PLANNING_PROMPT = """
+You are the orchestrator for a biomedical entity discovery system. You analyze discoveries from the previous iteration and make strategic decisions about the next iteration.
+
+**Current State:**
+- Iteration: {iteration}
+- Total entities found: {total_entities}
+- Workers active: {active_workers}
+
+**Worker Metrics & Query History:**
+{worker_metrics}
+
+**Recent Discoveries:**
+{recent_entities}
+
+**Original Query Constraints:**
+{query_constraints}
+
+**Your Tasks:**
+
+1. **Analyze Discoveries:**
+   - What patterns emerged? (geographic clustering, company mentions, code names)
+   - Are we meeting the query constraints? (e.g., China constraint satisfied?)
+   - Which workers are productive vs exhausted?
+
+2. **Identify Gaps:**
+   - Geographic gaps (constraint not met?)
+   - Evidence pivots (code names discovered but not searched?)
+   - Semantic gaps (missing entity types?)
+   - High-value sources (URLs discovered but not explored?)
+
+3. **Strategic Decisions:**
+   - Should we spawn new workers? (if gaps detected and budget > 25%)
+   - Should we kill workers? (if EXHAUSTED or DEAD_END)
+   - Should we evolve queries for existing workers?
+
+4. **Generate New Queries:**
+   - For each active worker, generate 3-5 new queries based on discoveries
+   - **IMPORTANT:** Check each worker's query_history to avoid repeating queries
+   - Queries should explore gaps, follow up on code names, or target companies
+   - Evolve queries based on what worked (high new_entities) vs what didn't
+
+Output as JSON:
+{{
+  "analysis": {{
+    "patterns": ["pattern1", "pattern2"],
+    "constraint_satisfaction": {{"china": true/false, "preclinical": true/false}},
+    "productive_workers": ["worker_id1"],
+    "exhausted_workers": ["worker_id2"]
+  }},
+  "gaps": [
+    {{
+      "type": "geographic|code_name|company|source",
+      "description": "China constraint not met - only 15% entities from Chinese sources",
+      "priority": "high|medium|low",
+      "evidence": ["ISM9274 from Insilico Medicine (China)", "BeiGene mentioned"]
+    }}
+  ],
+  "decisions": {{
+    "spawn_workers": [
+      {{
+        "worker_id": "worker_3",
+        "strategy": "chinese_company_search",
+        "strategy_description": "Target Chinese companies discovered in entity mentions",
+        "queries": ["Insilico Medicine CDK12", "BeiGene CDK12 pipeline"]
+      }}
+    ],
+    "kill_workers": ["worker_id2"],
+    "update_queries": {{
+      "worker_1": ["new_query1", "new_query2", "new_query3"]
+    }}
+  }},
+  "reasoning": "Brief explanation of strategic decisions"
+}}
+
+**Important guidelines:**
+- Always check query_history before generating new queries to avoid repetition
+- Prioritize gaps with concrete evidence (discovered code names, company names)
+- Kill workers only if they are truly exhausted (0 new entities in last iteration)
+- Spawn workers only if budget allows and gap is high priority
+- Evolve queries to explore what was discovered, not just repeat variations
+"""

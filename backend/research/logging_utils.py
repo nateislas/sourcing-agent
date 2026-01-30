@@ -1,3 +1,8 @@
+"""
+Logging utilities for the Deep Research Application.
+Provides structured logging for API calls and session-specific file logs.
+"""
+
 import logging
 import os
 import json
@@ -54,7 +59,7 @@ def log_api_call(
             if hasattr(obj, "dict"):  # Pydantic v1
                 return obj.dict()
             return str(obj)
-        except Exception:
+        except (ValueError, TypeError, AttributeError):
             return str(obj)
 
     def truncate_long_strings(obj, max_length=200):
@@ -64,16 +69,15 @@ def log_api_call(
         """
         if isinstance(obj, dict):
             return {k: truncate_long_strings(v, max_length) for k, v in obj.items()}
-        elif isinstance(obj, list):
+        if isinstance(obj, list):
             return [truncate_long_strings(item, max_length) for item in obj]
-        elif isinstance(obj, str):
+        if isinstance(obj, str):
             if len(obj) > max_length:
                 return (
                     obj[:max_length] + f"... [truncated {len(obj) - max_length} chars]"
                 )
             return obj
-        else:
-            return obj
+        return obj
 
     log_entry = {
         "timestamp": timestamp,
@@ -83,4 +87,4 @@ def log_api_call(
         "response": truncate_long_strings(serialize(response)),
     }
 
-    logger.info(f"API_CALL: {json.dumps(log_entry, indent=2)}")
+    logger.info("API_CALL: %s", json.dumps(log_entry, indent=2))

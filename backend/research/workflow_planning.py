@@ -14,6 +14,7 @@ from llama_index.core.workflow import (
 from backend.research.state import ResearchPlan, InitialWorkerStrategy
 from backend.research.llm import get_llm
 from backend.research.logging_utils import get_session_logger, log_api_call
+from backend.research.prompts import INITIAL_PLANNING_PROMPT
 
 
 class InitialPlanningWorkflow(Workflow):
@@ -43,9 +44,6 @@ class InitialPlanningWorkflow(Workflow):
         if not topic:
             raise ValueError("Missing topic for planning")
 
-        # Import the full prompt from prompts.py
-        from backend.research.prompts import INITIAL_PLANNING_PROMPT
-
         # The prompt expects {query}
         prompt_str = INITIAL_PLANNING_PROMPT.format(query=topic)
 
@@ -66,9 +64,9 @@ class InitialPlanningWorkflow(Workflow):
             text = response.text.replace("```json", "").replace("```", "").strip()
             data = json.loads(text)
 
-            # Construct ResearchPlan
-            # We map the complex JSON output to our Pydantic model
-            # data keys expected: query_analysis, synonyms, initial_workers, budget_reserve_pct, reasoning
+            # Construct ResearchPlan from JSON output
+            # Expected keys: query_analysis, synonyms, initial_workers,
+            # budget_reserve_pct, reasoning
 
             # Convert dict workers to Pydantic models
             workers = [
@@ -89,10 +87,16 @@ class InitialPlanningWorkflow(Workflow):
 
             return StopEvent(result=plan)
 
-        except Exception as e:
+        except (
+            ValueError,
+            KeyError,
+            json.JSONDecodeError,
+            AttributeError,
+            TypeError,
+        ) as e:
             # Fallback Plan
             if self.logger:
-                self.logger.error(f"Planning failed: {e}")
+                self.logger.error("Planning failed: %s", e)
 
             fallback_worker = InitialWorkerStrategy(
                 worker_id="worker_1",

@@ -1,3 +1,8 @@
+"""
+Orchestrator Workflow for the Deep Research Application.
+Manages the iterative research process, workers, and state aggregation.
+"""
+
 import os
 from typing import List, Optional, Union
 
@@ -9,7 +14,7 @@ from llama_index.core.workflow import (
     step,
 )
 
-from backend.research.state import ResearchState, WorkerState
+from backend.research.state import ResearchState, WorkerState, Entity
 from backend.research.events import (
     PlanCreatedEvent,
     WorkerStartEvent,
@@ -24,9 +29,6 @@ class DeepResearchWorkflow(Workflow):
     """
     Orchestrates the iterative research process.
     """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
 
     @step
     async def start(self, ctx: Context, ev: StartEvent) -> PlanCreatedEvent:
@@ -44,7 +46,7 @@ class DeepResearchWorkflow(Workflow):
 
         # Setup session logger
         logger = get_session_logger(state.id)
-        logger.info(f"Research session started for topic: {topic}")
+        logger.info("Research session started for topic: %s", topic)
 
         # Log start
         state.logs.append("Workflow initialized.")
@@ -120,6 +122,7 @@ class DeepResearchWorkflow(Workflow):
             novelty_rate=result.get("novelty_rate", 0.0),
             status=result.get("status", "PRODUCTIVE"),
             extracted_data=result.get("extracted_data", []),
+            discovered_links=result.get("discovered_links", []),
         )
 
     @step
@@ -151,7 +154,6 @@ class DeepResearchWorkflow(Workflow):
 
         total_new_entities = 0
         total_pages = 0
-        from backend.research.state import Entity
 
         for res in worker_results:
             w_state = state.workers.get(res.worker_id)
@@ -162,6 +164,12 @@ class DeepResearchWorkflow(Workflow):
                 w_state.status = res.status
                 total_new_entities += res.new_entities
                 total_pages += res.pages_fetched
+
+                # Process Discovered Links
+                for link in getattr(res, "discovered_links", []):
+                    if link not in state.visited_urls:
+                        state.visited_urls.add(link)
+                        w_state.personal_queue.append(link)
 
             # Merge entities into global state
             for item in res.extracted_data:
@@ -192,28 +200,88 @@ class DeepResearchWorkflow(Workflow):
 
         state.iteration_count += 1
         global_novelty = total_new_entities / max(total_pages, 1)
+        log_msg = (
+            "Iteration %s completed. Found %d new entities. Global Novelty: %.2f%%"
+        )
         state.logs.append(
-            f"Iteration {state.iteration_count} completed. Found {total_new_entities} new entities. Global Novelty: {global_novelty:.2%}"
+            log_msg % (state.iteration_count, total_new_entities, global_novelty * 100)
+        )
+        logger = get_session_logger(state.id)
+        logger.info(
+            log_msg,
+            state.iteration_count,
+            total_new_entities,
+            global_novelty * 100,
         )
 
         # --- Stopping Criteria Check ---
         # 1. Budget exhausted? (Stub check)
-        # 2. Novelty low? (Stub check)
-        # 3. Max iterations? (Configurable via env, default to 5)
-        max_iters = int(os.getenv("MAX_ITERATIONS", 5))
+        # 2. Novelty low? (Stop if novelty < 5% for 2 iterations)
+        # 3. Max iterations?
+        max_iters = int(os.getenv("MAX_ITERATIONS", "5"))
+
+        should_stop = False
         if state.iteration_count >= max_iters:
+            should_stop = True
+            msg = "Stopping: Max iterations reached."
+            state.logs.append(msg)
+            logger.info(msg)
+
+        if global_novelty < 0.05 and state.iteration_count > 1:
+            should_stop = True
+            msg = f"Stopping: Low novelty detected ({global_novelty:.2%})."
+            state.logs.append(msg)
+            logger.info(msg)
+
+        # 4. All workers dead?
+        all_dead = all(w.status == "DEAD_END" for w in state.workers.values())
+        if all_dead and state.workers:
+            should_stop = True
+            msg = "Stopping: All workers reached dead ends."
+            state.logs.append(msg)
+            logger.info(msg)
+
+        if should_stop:
             state.status = "completed"
             await activities.save_state(state)
             return StopEvent(result=state)
 
         # Iterate Planning (Adaptive Step)
-        # We call the agentic update logic to potentially spawn new workers or kill existing ones
+        # Call the agentic update logic to analyze discoveries and make strategic decisions
         new_plan = await activities.update_plan(state)
         state.plan = new_plan
 
-        # Sync worker states if the plan changed (e.g. killed workers)
-        # In a real implementation, the plan would specify which workers to shutdown
-        # For now, we rely on the status update from the result event
+        # Handle worker kills
+        for worker_id in new_plan.workers_to_kill:
+            if worker_id in state.workers:
+                state.workers[worker_id].status = "DEAD_END"
+                msg = f"Killed worker {worker_id} (exhausted)"
+                state.logs.append(msg)
+                logger.info(msg)
+
+        # Handle worker spawns
+        for worker_cfg in new_plan.initial_workers:
+            if worker_cfg.worker_id not in state.workers:
+                # New worker spawned by adaptive planning
+                w_state = WorkerState(
+                    id=worker_cfg.worker_id,
+                    research_id=state.id,
+                    strategy=worker_cfg.strategy,
+                    queries=worker_cfg.example_queries,
+                    status="ACTIVE",
+                )
+                state.workers[w_state.id] = w_state
+                msg = f"Spawned new worker {w_state.id} with strategy: {worker_cfg.strategy}"
+                state.logs.append(msg)
+                logger.info(msg)
+
+        # Update queries for existing workers
+        for worker_id, new_queries in new_plan.updated_queries.items():
+            if worker_id in state.workers:
+                state.workers[worker_id].queries = new_queries
+                msg = f"Updated queries for worker {worker_id}: {len(new_queries)} new queries"
+                state.logs.append(msg)
+                logger.info(msg)
 
         await activities.save_state(state)
 
