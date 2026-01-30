@@ -14,7 +14,10 @@ from backend.research.agent import ResearchAgent
 from backend.research.state import ResearchState, ResearchPlan, WorkerState
 from backend.research.client_search import PerplexitySearchClient
 from backend.research.extraction import EntityExtractor
+from backend.research.extraction import EntityExtractor
 from backend.research.state_manager import DatabaseStateManager
+from backend.research.verification import VerificationAgent, VerificationResult
+
 
 
 logger = logging.getLogger(__name__)
@@ -243,3 +246,56 @@ async def save_state(state: ResearchState) -> bool:
         repo = ResearchRepository(session)
         await repo.save_session(state)
     return True
+
+
+@activity.defn
+async def verify_entity(entity_data: dict, constraints: dict) -> dict:
+    """
+    Verifies a single entity against constraints using the VerificationAgent.
+    Args:
+        entity_data: Dict representation of the Entity object.
+        constraints: Dictionary of hard constraints from the plan.
+    Returns:
+        Dict representation of VerificationResult.
+    """
+    safe_get_logger().info("Verifying entity: %s", entity_data.get("canonical_name"))
+
+    # Reconstruct Entity object from dict
+    # We use Entity.model_validate or similar if Pydantic v2, or just constructor
+    from backend.research.state import Entity
+    entity = Entity(**entity_data)
+
+    agent = VerificationAgent()
+    result = await agent.verify_entity(entity, constraints)
+
+    return result.model_dump()
+
+
+@activity.defn
+async def analyze_gaps(entity_data: dict, verification_result: dict) -> list[str]:
+    """
+    Analyzes verification results to generate gap-filling search queries.
+    Args:
+        entity_data: Dict representation of the Entity.
+        verification_result: Dict representation of VerificationResult.
+    Returns:
+        List of specific search queries to fill the gaps.
+    """
+    canonical_name = entity_data.get("canonical_name")
+    missing_fields = verification_result.get("missing_fields", [])
+    
+    queries = []
+    
+    if "owner" in missing_fields:
+        queries.append(f'"{canonical_name}" developer owner company')
+        queries.append(f'who developed "{canonical_name}"')
+        
+    if "product_stage" in missing_fields or "clinical_phase" in missing_fields:
+        queries.append(f'"{canonical_name}" clinical trial stage phase')
+        
+    if "indication" in missing_fields:
+        queries.append(f'"{canonical_name}" therapeutic indication disease')
+        
+    safe_get_logger().info("Generated %d gap-filling queries for %s", len(queries), canonical_name)
+    return queries
+

@@ -97,6 +97,11 @@ class ResearchRepository:
             existing.attributes = entity.attributes
             existing.aliases = list(entity.aliases)
             existing.mention_count = entity.mention_count
+            
+            # Update verification status
+            existing.verification_status = entity.verification_status
+            existing.rejection_reason = entity.rejection_reason
+            existing.confidence_score = entity.confidence_score
 
             # Append ONLY new evidence
             existing_signatures = {(e.source_url, e.content) for e in existing.evidence}
@@ -120,6 +125,9 @@ class ResearchRepository:
                 attributes=entity.attributes,
                 aliases=list(entity.aliases),
                 mention_count=entity.mention_count,
+                verification_status=entity.verification_status,
+                rejection_reason=entity.rejection_reason,
+                confidence_score=entity.confidence_score,
             )
             self.session.add(db_entity)
             # Flush not strictly needed if we add evidence via relationship, but safer
@@ -174,4 +182,7 @@ class ResearchRepository:
             attributes=db_obj.attributes,
             mention_count=db_obj.mention_count,
             evidence=evidence,
+            verification_status=db_obj.verification_status,
+            rejection_reason=db_obj.rejection_reason,
+            confidence_score=db_obj.confidence_score,
         )

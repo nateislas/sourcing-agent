@@ -44,6 +44,12 @@ class EntityModel(Base):
     attributes: Mapped[dict] = mapped_column(JSON, default=dict)
     mention_count: Mapped[int] = mapped_column(Integer, default=0)
 
+    # Verification Fields
+    verification_status: Mapped[str] = mapped_column(String, default="UNVERIFIED")  # VERIFIED, UNCERTAIN, REJECTED
+    rejection_reason: Mapped[str] = mapped_column(String, nullable=True)
+    confidence_score: Mapped[float] = mapped_column(Integer, default=0)  # 0-100 score
+
+
     # Relationships
     evidence: Mapped[List["EvidenceModel"]] = relationship(
         "EvidenceModel", back_populates="entity", cascade="all, delete-orphan"
