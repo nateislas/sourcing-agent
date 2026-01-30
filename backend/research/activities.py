@@ -155,6 +155,7 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
             "status": "PRODUCTIVE" if novelty_rate > 0.1 else "DECLINING",
             "extracted_data": new_entities_found,  # For orchestrator to merge into state
             "discovered_links": discovered_links,  # For orchestrator to add to queues
+            "consumed_urls": url_queue,  # URLs processed in this iteration (from search + personal queue)
         }
     finally:
         await entity_extractor.close()

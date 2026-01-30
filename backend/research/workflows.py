@@ -106,7 +106,17 @@ class DeepResearchOrchestrator:
                 total_new_entities += res.get("new_entities", 0)
                 total_pages += res.get("pages_fetched", 0)
 
-                # Process Discovered Links
+                # Update Personal Queue
+                # 1. Remove consumed URLs (FIFO)
+                consumed_urls = res.get("consumed_urls", [])
+                if consumed_urls:
+                    w_state.personal_queue = [
+                        url
+                        for url in w_state.personal_queue
+                        if url not in consumed_urls
+                    ]
+
+                # 2. Add Discovered Links
                 for link in res.get("discovered_links", []):
                     if link not in state.visited_urls:
                         state.visited_urls.add(link)
