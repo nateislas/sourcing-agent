@@ -21,8 +21,12 @@ OUTPUT_FILE = "research_results.csv"
 async def export_to_csv(output_file: str = "research_results.csv"):
     print("Starting export...")
     async with AsyncSessionLocal() as session:
-        # Fetch all entities with their evidence eagerly loaded
-        stmt = select(EntityModel).options(selectinload(EntityModel.evidence))
+        # Fetch all entities with their evidence eagerly loaded, sorted by name
+        stmt = (
+            select(EntityModel)
+            .options(selectinload(EntityModel.evidence))
+            .order_by(EntityModel.canonical_name)
+        )
         result = await session.execute(stmt)
         entities = result.scalars().all()
 
@@ -58,13 +62,10 @@ async def export_to_csv(output_file: str = "research_results.csv"):
                 # Format: "[YYYY-MM-DD] url - excerpt" per line
                 evidence_lines = []
                 for ev in entity.evidence:
-                    # Clean content/excerpt
-                    content_preview = (
-                        ev.content[:200].replace("\n", " ").strip() + "..."
-                        if len(ev.content) > 200
-                        else ev.content.replace("\n", " ")
-                    )
-                    line = f"[{ev.timestamp[:10]}] {ev.source_url} - {content_preview}"
+                    # Clean content (the excerpt provided by LLM during extraction)
+                    # We no longer truncate to 200 chars to ensure auditable verbatim snippets are fully visible
+                    clean_content = ev.content.replace("\n", " ").strip()
+                    line = f"[{ev.timestamp[:10]}] {ev.source_url} - {clean_content}"
                     evidence_lines.append(line)
 
                 evidence_package = "\n".join(evidence_lines)

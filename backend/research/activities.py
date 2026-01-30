@@ -12,10 +12,7 @@ from backend.db.connection import AsyncSessionLocal
 from backend.db.repository import ResearchRepository
 from backend.research.agent import ResearchAgent
 from backend.research.state import ResearchState, ResearchPlan, WorkerState
-from backend.research.client_search import (
-    PerplexitySearchClient,
-    TavilySearchClient,
-)
+from backend.research.client_search import PerplexitySearchClient
 from backend.research.extraction import EntityExtractor
 from backend.research.state_manager import DatabaseStateManager
 
@@ -57,7 +54,6 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
 
     # Initialize clients
     perp_client = PerplexitySearchClient(research_id=worker_state.research_id)
-    tav_client = TavilySearchClient(research_id=worker_state.research_id)
     entity_extractor = EntityExtractor(research_id=worker_state.research_id)
     state_manager = DatabaseStateManager()
 
@@ -121,34 +117,50 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
                 "Worker %s processing URL: %s", worker_state.id, current_url
             )
 
-            # For each URL, we try to get high-fidelity markdown via Tavily Extract
+            # Smart Content Routing:
+            # 1. Always try Crawl4AI first (handles JS, clicks buttons, finds PDFs)
+            # 2. If PDF content is detected, fallback to LlamaExtract
+            # 3. Otherwise use Crawl4AI's extraction results
+
             try:
-                tav_res = await tav_client.search(
-                    current_url, max_results=1, include_raw_content=True
+                # Step 1: Try Crawl4AI (works for most cases)
+                safe_get_logger().info("Attempting Crawl4AI for %s", current_url)
+                from backend.research.extraction_crawl4ai import Crawl4AIExtractor
+
+                crawl_extractor = Crawl4AIExtractor(
+                    research_id=worker_state.research_id
                 )
-                if tav_res and tav_res[0].raw_content:
-                    raw_content = tav_res[0].raw_content
-                    text_content = tav_res[0].snippet or raw_content
-                else:
-                    # Fallback or empty
-                    raw_content = None
-                    text_content = ""
+                extraction_res = await crawl_extractor.extract_from_html(
+                    url=current_url,
+                    research_query=query,  # Topic context for late binding
+                )
+
+                # Step 2: Check if PDF content was detected
+                if extraction_res.get("is_pdf", False):
+                    # Fallback to LlamaExtract for PDF content
+                    pdf_path = extraction_res.get("pdf_path")
+                    if pdf_path and os.path.exists(pdf_path):
+                        safe_get_logger().info(
+                            "PDF downloaded to %s, routing to LlamaExtract: %s", pdf_path, current_url
+                        )
+                        try:
+                            # Extract using LlamaExtract
+                            pdf_extraction = await entity_extractor.extract_entities(
+                                pdf_path, current_url, raw_html=None
+                            )
+                            extraction_res = pdf_extraction
+                        finally:
+                            # Cleanup temporary PDF file
+                            try:
+                                os.remove(pdf_path)
+                            except Exception as e:
+                                safe_get_logger().warning("Failed to cleanup PDF %s: %s", pdf_path, e)
+
+                pages_fetched += 1
+
             except Exception as e:
-                safe_get_logger().warning(
-                    "Tavily extraction failed for %s: %s", current_url, e
-                )
-                raw_content = None
-                text_content = ""
-
-            if not text_content:
+                safe_get_logger().error("Extraction failed for %s: %s", current_url, e)
                 continue
-
-            pages_fetched += 1
-
-            # Extract entities AND links
-            extraction_res = await entity_extractor.extract_entities(
-                text_content, current_url, raw_html=raw_content
-            )
 
             # Entity Deduplication Logic
             for entry in extraction_res.get("entities", []):
@@ -159,15 +171,12 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
                 # Always add to extracted_data so we capture the evidence
                 new_entities_found.append(entry)
 
-                # Check Global Novelty
-                is_known = await state_manager.is_entity_known(canonical)
-                if not is_known:
-                    # Attempt to mark as known. If success, it counts as new.
-                    # If failure (race condition), someone else claimed it.
-                    if await state_manager.mark_entity_known(
-                        canonical, attributes=entry.get("attributes")
-                    ):
-                        globally_new_count += 1
+                # Attempt to mark as known. If it returns True, it's a NEW entity.
+                # Even if it's already known, mark_entity_known will handle metadata merging.
+                if await state_manager.mark_entity_known(
+                    canonical, attributes=entry.get("attributes")
+                ):
+                    globally_new_count += 1
 
             # Phase 1 Link Filtering
             for link in extraction_res.get("links", []):

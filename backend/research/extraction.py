@@ -16,42 +16,74 @@ from backend.research.state import EvidenceSnippet
 from backend.research.logging_utils import get_session_logger, log_api_call
 
 
-class DrugExtractionSchema(BaseModel):
-    """Schema for LlamaExtract to identify drugs and trials."""
+class AssetExtractionSchema(BaseModel):
+    """
+    Extract ONLY specific therapeutic assets from biomedical text.
+
+    An ASSET is a specific drug, compound, or development program with a unique identifier.
+    DO NOT extract target proteins, generic drug classes, or diseases.
+    """
 
     canonical_name: str = Field(
-        description="The primary name of the drug or compound (e.g. Relatlimab)"
+        description="""The specific name or code of the therapeutic asset.
+        
+EXTRACT (Examples of what TO extract):
+- Named compounds: "ISM9274", "dinaciclib", "niraparib", "olaparib"
+- Development codes: "BMS-986158", "CT7439", "CTX-712", "SR-4835"
+- Research codes: "Compound 7f", "compound 14k", "YJZ5118"
+- Program names: "AI-designed covalent CDK12/13 inhibitor ISM9274"
+
+DO NOT EXTRACT (Examples of what NOT to extract):
+- Target proteins: "CDK12", "PARP", "HER2", "PD-1", "LAG-3"
+- Generic classes: "CDK12 inhibitors", "PARP inhibitors", "small molecules", "antibodies"
+- Diseases/indications: "breast cancer", "TNBC", "pancreatic cancer"
+- Mechanisms: "DNA damage response", "cell cycle regulation"
+- General concepts: "chemotherapy", "immunotherapy"
+
+CRITICAL: If the text only mentions generic classes or targets without naming a specific 
+compound with an identifier or proper name, DO NOT extract anything. Return empty.
+Only extract if you can identify a SPECIFIC asset with a name or code."""
     )
     aliases: Optional[List[str]] = Field(
-        description="Other names, code names, or former names (e.g. BMS-986016)",
+        description="""Alternative names or codes for this SAME asset.
+Examples: 
+- ["compound 14k"] as alias for "YJZ5118"
+- ["BMS-986016"] as alias for "Relatlimab"
+Only include aliases that refer to the exact same therapeutic asset.""",
         default_factory=list,
     )
     target: Optional[str] = Field(
-        description="The biological target (e.g. LAG-3, PD-1)",
+        description="The biological target this asset acts on (e.g. CDK12, PARP, PD-1)",
         default=None,
     )
     modality: Optional[str] = Field(
-        description="The type of therapy (e.g. Monoclonal antibody, Small molecule)",
+        description="The type of therapy (e.g. Monoclonal antibody, Small molecule, PROTAC, ADC)",
         default=None,
     )
     product_stage: Optional[str] = Field(
-        description="The current development stage (e.g. Phase 2, Preclinical)",
+        description="The current development stage (e.g. Phase 2, Preclinical, IND-enabling, Discovery)",
         default=None,
     )
     indication: Optional[str] = Field(
-        description="The disease or condition being treated",
+        description="The disease or condition being treated (e.g. TNBC, pancreatic cancer)",
         default=None,
     )
     geography: Optional[str] = Field(
-        description="Geographic scope or location of the entity/asset",
+        description="Geographic scope or location if specified (e.g. China, US, Europe)",
         default=None,
     )
     owner: Optional[str] = Field(
-        description="Company or institution that owns the asset",
+        description="Company or institution developing this asset (e.g. Insilico Medicine, Carrick Therapeutics)",
         default=None,
     )
     trial_ids: Optional[List[str]] = Field(
-        description="NCT identifiers for associated trials", default_factory=list
+        description="NCT identifiers for associated clinical trials (e.g. NCT12345678)",
+        default_factory=list,
+    )
+    evidence_excerpt: Optional[str] = Field(
+        description="""A concise, verbatim excerpt from the text that mentions the asset identifier and provides evidence for its relevance or attributes (e.g., target, stage, owners). 
+        CRITICAL: This MUST be a verbatim string from the source text to ensure the result is auditable.""",
+        default=None,
     )
 
     @field_validator("aliases", "trial_ids", mode="before")
@@ -144,7 +176,7 @@ class LlamaExtractionClient:
         try:
             agent = await self.client.extraction.extraction_agents.create(
                 name=agent_name,
-                data_schema=DrugExtractionSchema.model_json_schema(),
+                data_schema=AssetExtractionSchema.model_json_schema(),
                 config={"extraction_mode": "BALANCED"},
             )
             self.agent_id = agent.id
@@ -162,9 +194,9 @@ class LlamaExtractionClient:
 
     async def extract_structured_data(
         self, text_or_file_path: str
-    ) -> List[DrugExtractionSchema]:
+    ) -> List[AssetExtractionSchema]:
         """
-        Runs extraction and returns a list of DrugExtractionSchema objects.
+        Runs extraction and returns a list of AssetExtractionSchema objects.
         """
         if not self.client:
             return []
@@ -202,9 +234,9 @@ class LlamaExtractionClient:
         # If target is PER_DOC, it's one dict. If PER_PAGE/ROW, it's a list.
         data = result.data
         if isinstance(data, dict):
-            return [DrugExtractionSchema(**data)]
+            return [AssetExtractionSchema(**data)]
         if isinstance(data, list):
-            return [DrugExtractionSchema(**item) for item in data]
+            return [AssetExtractionSchema(**item) for item in data]
         return []
 
 
@@ -233,9 +265,12 @@ class EntityExtractor:
         structured_findings = await self.llama_client.extract_structured_data(text)
 
         for drug in structured_findings:
+            # Use specific excerpt if provided by LLM, else fallback to slicing
+            excerpt = drug.evidence_excerpt or (text[:500] if len(text) > 500 else text)
+            
             snippet = EvidenceSnippet(
                 source_url=source_url,
-                content=text[:500] if len(text) > 500 else text,
+                content=excerpt,
                 timestamp=datetime.utcnow().isoformat() + "Z",
             )
 

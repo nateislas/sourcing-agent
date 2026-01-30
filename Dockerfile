@@ -22,6 +22,9 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY requirements.txt .
 RUN uv pip install --system --no-cache -r requirements.txt
 
+# Install Playwright browsers and dependencies
+RUN python -m playwright install --with-deps chromium
+
 # Copy project
 COPY . .
 
