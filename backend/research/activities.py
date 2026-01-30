@@ -17,6 +17,7 @@ from backend.research.client_search import (
     TavilySearchClient,
 )
 from backend.research.extraction import EntityExtractor
+from backend.research.state_manager import DatabaseStateManager
 
 
 logger = logging.getLogger(__name__)
@@ -58,12 +59,14 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
     perp_client = PerplexitySearchClient(research_id=worker_state.research_id)
     tav_client = TavilySearchClient(research_id=worker_state.research_id)
     entity_extractor = EntityExtractor(research_id=worker_state.research_id)
+    state_manager = DatabaseStateManager()
 
     try:
         # Metrics for this iteration
         pages_fetched = 0
-        new_entities_found = []
+        new_entities_found = []  # Holds ALL extracted entities (evidence)
         discovered_links = []
+        globally_new_count = 0  # Metric: truly new entities
 
         # 1. Search Phase
         # Use round-robin query selection based on iteration
@@ -101,6 +104,19 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
             if pages_fetched >= page_budget:
                 break
 
+            # --- Global Deduplication Check ---
+            is_visited = await state_manager.is_url_visited(
+                current_url, research_id=worker_state.research_id
+            )
+            if is_visited:
+                safe_get_logger().info("Skipping visited URL: %s", current_url)
+                continue
+
+            # Mark visited immediately (optimistic concurrency)
+            await state_manager.mark_url_visited(
+                current_url, research_id=worker_state.research_id
+            )
+
             safe_get_logger().info(
                 "Worker %s processing URL: %s", worker_state.id, current_url
             )
@@ -134,23 +150,44 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
                 text_content, current_url, raw_html=raw_content
             )
 
+            # Entity Deduplication Logic
             for entry in extraction_res.get("entities", []):
+                canonical = entry.get("canonical")
+                if not canonical:
+                    continue
+
+                # Always add to extracted_data so we capture the evidence
                 new_entities_found.append(entry)
 
+                # Check Global Novelty
+                is_known = await state_manager.is_entity_known(canonical)
+                if not is_known:
+                    # Attempt to mark as known. If success, it counts as new.
+                    # If failure (race condition), someone else claimed it.
+                    if await state_manager.mark_entity_known(
+                        canonical, attributes=entry.get("attributes")
+                    ):
+                        globally_new_count += 1
+
+            # Phase 1 Link Filtering
             for link in extraction_res.get("links", []):
-                discovered_links.append(link)
+                # Check visited before adding to discovered list
+                if not await state_manager.is_url_visited(
+                    link, research_id=worker_state.research_id
+                ):
+                    discovered_links.append(link)
 
         # Update query record with results
-        query_record["new_entities"] = len(new_entities_found)
+        query_record["new_entities"] = globally_new_count
         worker_state.query_history.append(query_record)
 
-        novelty_rate = len(new_entities_found) / max(pages_fetched, 1)
+        novelty_rate = globally_new_count / max(pages_fetched, 1)
 
         return {
             "worker_id": worker_state.id,
             "pages_fetched": pages_fetched,
-            "entities_found": len(new_entities_found),
-            "new_entities": len(new_entities_found),
+            "entities_found": len(new_entities_found),  # Total extracted this run
+            "new_entities": globally_new_count,  # Globally new
             "novelty_rate": novelty_rate,
             "status": "PRODUCTIVE" if novelty_rate > 0.1 else "DECLINING",
             "extracted_data": new_entities_found,  # For orchestrator to merge into state

@@ -72,16 +72,22 @@ class ResearchRepository:
 
         await self.session.commit()
 
+        # Update relational tables for Entities and Evidence
+        for entity in state.known_entities.values():
+            await self.save_entity(entity)
+
     async def save_entity(self, entity: Entity):
         """
         Persists a discovered entity and its associated evidence.
-        Updates existing entities if found by canonical name.
+        Updates existing entities if found and appends new evidence.
         Args:
             entity: The Entity domain model to save.
         """
-        # Check if exists
-        stmt = select(EntityModel).where(
-            EntityModel.canonical_name == entity.canonical_name
+        # Check if exists (with evidence loaded for deduplication)
+        stmt = (
+            select(EntityModel)
+            .options(selectinload(EntityModel.evidence))
+            .where(EntityModel.canonical_name == entity.canonical_name)
         )
         result = await self.session.execute(stmt)
         existing = result.scalar_one_or_none()
@@ -91,6 +97,22 @@ class ResearchRepository:
             existing.attributes = entity.attributes
             existing.aliases = list(entity.aliases)
             existing.mention_count = entity.mention_count
+
+            # Append ONLY new evidence
+            existing_signatures = {(e.source_url, e.content) for e in existing.evidence}
+
+            for ev in entity.evidence:
+                if (ev.source_url, ev.content) not in existing_signatures:
+                    db_ev = EvidenceModel(
+                        entity_name=entity.canonical_name,
+                        source_url=ev.source_url,
+                        content=ev.content,
+                        timestamp=ev.timestamp,
+                    )
+                    # We can append to existing.evidence collection
+                    existing.evidence.append(db_ev)
+                    existing_signatures.add((ev.source_url, ev.content))
+
         else:
             # Create new
             db_entity = EntityModel(
@@ -100,10 +122,11 @@ class ResearchRepository:
                 mention_count=entity.mention_count,
             )
             self.session.add(db_entity)
-            # Flush to get ID if needed, though canonical_name is PK
-            await self.session.flush()
+            # Flush not strictly needed if we add evidence via relationship, but safer
+            # to just add evidence objects directly or via relationship.
+            # Using relationship on new object:
 
-            # Handle Evidence
+            db_evidence_list = []
             for ev in entity.evidence:
                 db_ev = EvidenceModel(
                     entity_name=entity.canonical_name,
@@ -111,7 +134,9 @@ class ResearchRepository:
                     content=ev.content,
                     timestamp=ev.timestamp,
                 )
-                self.session.add(db_ev)
+                db_evidence_list.append(db_ev)
+
+            db_entity.evidence = db_evidence_list
 
         await self.session.commit()
 

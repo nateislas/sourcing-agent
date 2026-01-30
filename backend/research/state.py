@@ -19,8 +19,8 @@ def safe_uuid4() -> str:
     if workflow:
         try:
             return str(workflow.uuid4())
-        except RuntimeError:
-            # Not in a workflow context
+        except Exception:
+            # Not in a workflow context or Temporal event loop
             pass
     return str(uuid.uuid4())
 
