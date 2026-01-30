@@ -22,7 +22,8 @@ from frontend.ui_utils import (
     render_log_stream,
     render_source_panel,
     render_result_table,
-    render_export_tools
+    render_export_tools,
+    render_research_plan
 )
 
 load_dotenv()
@@ -103,21 +104,25 @@ def home_page():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         with st.container(border=True):
-            topic = st.text_input("Enter Research Topic", placeholder="e.g., CDK12 small molecule, preclinical, TNBC, China")
-            
-            if st.button("Initialize Deep Scan", width="stretch", type="primary"):
-                if not topic:
-                    st.error("Please enter a topic")
-                else:
-                    with st.status("Launching Orbital Agents...", expanded=True) as status:
-                        try:
-                            # Get the session ID from the workflow
-                            session_id = asyncio.run(start_research(topic))
-                            status.update(label="Scanning Initialized!", state="complete")
-                            st.query_params["session_id"] = session_id
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Launch sequence failed: {e}")
+            with st.form(key="search_form", border=False):
+                topic = st.text_input("Enter Research Topic", placeholder="e.g., CDK12 small molecule, preclinical, TNBC, China")
+                
+                # Using form_submit_button handles "Enter" key correctly
+                submitted = st.form_submit_button("Initialize Deep Scan", type="primary", use_container_width=True)
+                
+                if submitted:
+                    if not topic:
+                        st.error("Please enter a topic")
+                    else:
+                        with st.status("Launching Orbital Agents...", expanded=True) as status:
+                            try:
+                                # Get the session ID from the workflow
+                                session_id = asyncio.run(start_research(topic))
+                                status.update(label="Scanning Initialized!", state="complete")
+                                st.query_params["session_id"] = session_id
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Launch sequence failed: {e}")
 
     st.markdown("---")
     st.subheader("Recent Research Sessions")
@@ -172,13 +177,20 @@ def monitor_page(session_id: str):
         st.warning(f"Status: {state.status.replace('_', ' ').title()}")
     
     # Main Content Area
-    c1, c2 = st.columns([2, 1])
-    with c1:
-        render_log_stream(state.logs)
-        render_result_table(state.known_entities)
-    with c2:
-        render_worker_cards(state.workers)
+    tab_dash, tab_strat, tab_explore = st.tabs(["📊 Dashboard", "🎯 Research Strategy", "🌐 Link Explorer"])
+    
+    with tab_dash:
+        c1, c2 = st.columns([2, 1])
+        with c1:
+            render_log_stream(state.logs)
+            render_result_table(state.known_entities)
+        with c2:
+            render_worker_cards(state.workers)
+            
+    with tab_strat:
+        render_research_plan(state.plan)
         
+    with tab_explore:
         # Aggregate Discovery Frontier from all workers
         frontier = set()
         for worker in state.workers.values():

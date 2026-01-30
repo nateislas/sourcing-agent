@@ -9,7 +9,7 @@ def load_css(file_name):
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 def render_worker_cards(workers):
-    """Renders visual cards for active research workers."""
+    """Renders visual cards for active research workers with detailed insights."""
     st.subheader("Active Knowledge Workers")
     
     if not workers:
@@ -32,8 +32,8 @@ def render_worker_cards(workers):
         with col:
             st.markdown(f"""
             <div class="glass-card worker-card {status_class}">
-                <div style="font-weight: bold; margin-bottom: 5px; color: var(--text-primary);">{w_id[:15]}...</div>
-                <div style="font-size: 0.8rem; color: var(--text-secondary);">Status: {w.status}</div>
+                <div style="font-weight: bold; margin-bottom: 5px; color: var(--text-primary);">{w.strategy}</div>
+                <div style="font-size: 0.8rem; color: var(--text-secondary);">ID: {w_id[:8]}... | Status: {w.status}</div>
                 <div style="display: flex; justify-content: space-between; margin-top: 10px; font-size: 0.85rem;">
                     <span>Pages: {w.pages_fetched}</span>
                     <span>Entities: {w.entities_found}</span>
@@ -41,6 +41,20 @@ def render_worker_cards(workers):
                 </div>
             </div>
             """, unsafe_allow_html=True)
+            
+            with st.expander("Worker Insights", expanded=False):
+                st.markdown(f"**Strategy:** {w.strategy}")
+                
+                if hasattr(w, 'query_history') and w.query_history:
+                    st.markdown("**Recent Queries:**")
+                    for q_entry in list(w.query_history)[-3:]:
+                        query_text = q_entry.get("query", "Unknown")
+                        novelty = q_entry.get("new_entities", 0)
+                        st.markdown(f"- `{query_text}` (Found: {novelty})")
+                
+                if hasattr(w, 'explored_domains') and w.explored_domains:
+                    st.markdown(f"**Domains Explored:** {len(w.explored_domains)}")
+                    st.caption(", ".join(list(w.explored_domains)[:5]) + "...")
 
 def render_log_stream(logs):
     """Renders an auto-scrolling log terminal."""
@@ -117,6 +131,77 @@ def render_result_table(entities):
                     <div style="font-style: italic; border-left: 2px solid var(--border-color); padding-left: 10px; color: var(--text-primary);">"{ev.content}"</div>
                 </div>
                 """, unsafe_allow_html=True)
+
+def render_research_plan(plan):
+    """Renders the comprehensive research plan and strategic reasoning."""
+    st.subheader("Research Strategy & Plan")
+    
+    if not plan:
+        st.info("Plan is being formulated by the orchestrator...")
+        return
+
+    # Tabs for different plan components
+    tab1, tab2, tab3 = st.tabs(["🎯 Strategy", "🧠 Reasoning", "🚧 Gaps & Next Steps"])
+
+    with tab1:
+        st.markdown("### Initial Query Analysis")
+        if plan.query_analysis:
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown("**Targets Identified:**")
+                targets = plan.query_analysis.get("targets", [])
+                st.write(", ".join(targets) if targets else "None")
+                
+                st.markdown("**Indications:**")
+                indications = plan.query_analysis.get("indications", [])
+                st.write(", ".join(indications) if indications else "None")
+            
+            with c2:
+                st.markdown("**Modality Constraints:**")
+                modalities = plan.query_analysis.get("modalities", [])
+                st.write(", ".join(modalities) if modalities else "None")
+                
+                st.markdown("**Geographic Focus:**")
+                geo = plan.query_analysis.get("geography", [])
+                st.write(", ".join(geo) if geo else "None")
+
+        if plan.synonyms:
+            st.markdown("---")
+            st.markdown("**Expansion Synonyms:**")
+            for key, syns in plan.synonyms.items():
+                st.markdown(f"> **{key.title()}**: {', '.join(syns)}")
+
+    with tab2:
+        st.markdown("### Strategic Rationale")
+        st.markdown(f"""
+        <div class="strategy-container">
+            <div class="strategy-content">{plan.reasoning or "No detailed reasoning provided."}</div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if hasattr(plan, 'findings_summary') and plan.findings_summary:
+            st.markdown("---")
+            st.markdown("**Latest Findings Summary:**")
+            st.info(plan.findings_summary)
+
+    with tab3:
+        col_gaps, col_steps = st.columns(2)
+        
+        with col_gaps:
+            st.markdown("### Knowledge Gaps")
+            if plan.gaps:
+                for gap in plan.gaps:
+                    st.warning(f"**{gap.description}**\n\n*Priority: {gap.priority.title()}*")
+            else:
+                st.success("No critical gaps identified at this stage.")
+        
+        with col_steps:
+            st.markdown("### Next Steps")
+            if plan.next_steps:
+                for step in plan.next_steps:
+                    st.markdown(f"- [ ] {step}")
+            else:
+                st.write("Orchestrating next moves...")
 
 def prepare_csv_data(entities):
     """Converts entities to a CSV string for download."""
