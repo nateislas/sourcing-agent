@@ -50,3 +50,38 @@ class IterationCompleteEvent(Event):
     iteration: int
     summary: str
     global_novelty_rate: float
+
+
+class VerificationStartEvent(Event):
+    """Event triggered to start the verification phase."""
+
+
+class VerifyEntityEvent(Event):
+    """Event triggered to verify a specific entity."""
+
+    entity: dict
+    constraints: dict
+
+
+class VerificationResultEvent(Event):
+    """Event carrying the verification result for a single entity."""
+
+    result: dict
+
+
+class GapFillEvent(Event):
+    """Event triggered to execute gap-filling searches for an entity."""
+    
+    entity: dict
+    queries: List[str]
+
+
+class GapFillingStartEvent(Event):
+    """Signals the start of the gap filling phase with the expected count."""
+    count: int
+
+
+class GapFilledEvent(Event):
+    """Signals completion of a single gap filling task."""
+    worker_id: str
+

@@ -57,6 +57,12 @@ class Entity(BaseModel):
     # Count of times extracted
     mention_count: int = 0
 
+    # Verification Status
+    verification_status: Literal["VERIFIED", "UNVERIFIED", "UNCERTAIN", "REJECTED"] = "UNVERIFIED"
+    rejection_reason: Optional[str] = None
+    confidence_score: float = 0.0
+
+
 
 # --- Worker State & Metrics ---
 

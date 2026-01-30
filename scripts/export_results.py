@@ -42,6 +42,9 @@ async def export_to_csv(output_file: str = "research_results.csv"):
                 "Indication",
                 "Geography",
                 "Owner",
+                "Verification Status",
+                "Confidence Score",
+                "Rejection Reason",
                 "Evidence Package",
             ]
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -79,6 +82,9 @@ async def export_to_csv(output_file: str = "research_results.csv"):
                     "Indication": attrs.get("indication") or "Unknown",
                     "Geography": attrs.get("geography") or "Unknown",
                     "Owner": attrs.get("owner") or "Unknown",
+                    "Verification Status": entity.verification_status,
+                    "Confidence Score": entity.confidence_score,
+                    "Rejection Reason": entity.rejection_reason,
                     "Evidence Package": evidence_package,
                 }
                 writer.writerow(row)

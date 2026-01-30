@@ -19,7 +19,16 @@ from backend.research.events import (
     PlanCreatedEvent,
     WorkerStartEvent,
     WorkerResultEvent,
+    WorkerStartEvent,
+    WorkerResultEvent,
     IterationCompleteEvent,
+    VerificationStartEvent,
+    VerifyEntityEvent,
+    VerifyEntityEvent,
+    VerificationResultEvent,
+    GapFillEvent,
+    GapFillingStartEvent,
+    GapFilledEvent,
 )
 from backend.research import activities
 from backend.research.logging_utils import get_session_logger
@@ -90,11 +99,11 @@ class DeepResearchWorkflow(Workflow):
         ]
 
         if not active_workers:
-            # No viable workers left to dispatch. Transition to completed.
-            state.status = "completed"
-            state.logs.append("No active or productive workers remaining. Stopping.")
+            # No viable workers left to dispatch. Transition to verification.
+            state.status = "verification_pending"
+            state.logs.append("No active or productive workers remaining. Starting verification.")
             await activities.save_state(state)
-            return StopEvent(result=state)
+            return VerificationStartEvent()
 
         # Send an event for EACH active worker
         for worker in active_workers:
@@ -263,9 +272,9 @@ class DeepResearchWorkflow(Workflow):
             logger.info(msg)
 
         if should_stop:
-            state.status = "completed"
+            state.status = "verification_pending"
             await activities.save_state(state)
-            return StopEvent(result=state)
+            return VerificationStartEvent()
 
         # Iterate Planning (Adaptive Step)
         # Call the agentic update logic to analyze discoveries and make strategic decisions
@@ -311,3 +320,159 @@ class DeepResearchWorkflow(Workflow):
             summary=f"Finished iteration {state.iteration_count}",
             global_novelty_rate=global_novelty,
         )
+
+    @step
+    async def dispatch_verification(
+        self, ctx: Context, ev: VerificationStartEvent
+    ) -> Optional[VerifyEntityEvent]:
+        """
+        Dispatches verification tasks for all known entities.
+        """
+        state: ResearchState = await ctx.store.get("state")
+        logger = get_session_logger(state.id)
+        logger.info("Starting verification phase for %d entities.", len(state.known_entities))
+        state.logs.append(f"Starting verification phase for {len(state.known_entities)} entities.")
+        
+        # Constraints from the plan
+        constraints = state.plan.query_analysis
+        
+        # Send event for each entity
+        for entity in state.known_entities.values():
+            # Only verify unverified or uncertain entities? For now, verify all.
+            # Convert entity to dict for event payload
+            entity_dict = entity.model_dump()
+            ctx.send_event(VerifyEntityEvent(entity=entity_dict, constraints=constraints))
+            
+        return None
+
+    @step(num_workers=10)
+    async def execute_verification(
+        self, ctx: Context, ev: VerifyEntityEvent
+    ) -> VerificationResultEvent:
+        """
+        Executes verification for a single entity using the VerificationAgent.
+        """
+        # Call activity
+        result = await activities.verify_entity(ev.entity, ev.constraints)
+        return VerificationResultEvent(result=result)
+
+    @step
+    async def aggregate_verification(
+        self, ctx: Context, ev: VerificationResultEvent
+    ) -> StopEvent:
+        """
+        Aggregates verification results and updates state.
+        """
+        state: ResearchState = await ctx.store.get("state")
+        num_entities = len(state.known_entities)
+        
+        # Wait for all verification results
+        events = ctx.collect_events(ev, [VerificationResultEvent] * num_entities)
+        if events is None:
+            return None
+            
+        logger = get_session_logger(state.id)
+        logger.info("All verification tasks completed.")
+        
+        # Update state with results
+        verified_count = 0
+        rejected_count = 0
+        uncertain_count = 0
+        
+        for res_ev in events:
+            res = res_ev.result
+            canonical = res.get("canonical_name")
+            if canonical and canonical in state.known_entities:
+                ent = state.known_entities[canonical]
+                ent.verification_status = res.get("status", "UNCERTAIN")
+                ent.rejection_reason = res.get("rejection_reason")
+                ent.confidence_score = res.get("confidence", 0.0)
+                
+                if ent.verification_status == "VERIFIED":
+                    verified_count += 1
+                elif ent.verification_status == "REJECTED":
+                    rejected_count += 1
+                else:
+                    uncertain_count += 1
+
+        gap_events_dispatched = 0
+        if uncertain_count > 0:
+            logger.info("Found %d uncertain entities. Triggering gap analysis.", uncertain_count)
+            
+            # Identify gaps and dispatch events
+            for res_ev in events:
+                res = res_ev.result
+                if res.get("status") == "UNCERTAIN":
+                    ent_data = state.known_entities[res["canonical_name"]].model_dump()
+                    queries = await activities.analyze_gaps(ent_data, res)
+                    if queries:
+                       ctx.send_event(GapFillEvent(entity=ent_data, queries=queries))
+                       gap_events_dispatched += 1
+
+        summary_msg = (
+            f"Verification Complete: {verified_count} Verified, "
+            f"{rejected_count} Rejected, {uncertain_count} Uncertain."
+        )
+        state.logs.append(summary_msg)
+        logger.info(summary_msg)
+        
+        await activities.save_state(state)
+        
+        if gap_events_dispatched > 0:
+            logger.info("Dispatching %d gap-filling tasks.", gap_events_dispatched)
+            return GapFillingStartEvent(count=gap_events_dispatched)
+        
+        return StopEvent(result=state)
+
+    @step
+    async def execute_gap_fill(self, ctx: Context, ev: GapFillEvent) -> GapFilledEvent:
+        """
+        Executes gap-filling search for a specific entity.
+        Reuses the existing worker execution logic but with targeted queries.
+        """
+        # Create a temporary worker state for this specific task
+        worker_id = f"gap-fill-{ev.entity.get('canonical_name')}"[:30]
+        # Clean ID
+        import re
+        worker_id = re.sub(r"[^a-zA-Z0-9-]", "", worker_id)
+        
+        state: ResearchState = await ctx.store.get("state")
+        
+        # Configure a targeted worker
+        worker = WorkerState(
+            id=worker_id,
+            research_id=state.id,
+            strategy="gap_filling",
+            queries=ev.queries,
+            status="ACTIVE",
+            personal_queue=[], # Could seed with entity domains if known
+        )
+        
+        # Execute single iteration (search -> fetch -> extract)
+        # We reuse the existing activity!
+        await activities.execute_worker_iteration(worker)
+        
+        return GapFilledEvent(worker_id=worker_id)
+
+    @step
+    async def await_gap_filling(self, ctx: Context, ev: GapFillingStartEvent) -> StopEvent:
+        """
+        Waits for all gap-filling tasks to complete.
+        """
+        state: ResearchState = await ctx.store.get("state")
+        logger = get_session_logger(state.id)
+        
+        logger.info("Waiting for %d gap-filling tasks...", ev.count)
+        
+        # Wait for all gap filled events
+        # Note: We don't strictly need the results payload as execute_worker_iteration saves to DB side-effect
+        events = ctx.collect_events(ev, [GapFilledEvent] * ev.count)
+        if events is None:
+            return None
+            
+        logger.info("All gap-filling tasks completed.")
+        state.logs.append("Gap filling phase complete.")
+        state.status = "completed"
+        
+        await activities.save_state(state)
+        return StopEvent(result=state)
