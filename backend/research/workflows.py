@@ -144,7 +144,9 @@ class DeepResearchOrchestrator:
                             drug_class=item.get("drug_class"),
                             clinical_phase=item.get("clinical_phase"),
                         )
-                        new_entity.aliases.add(item["alias"])
+                        # Add all aliases from the normalized list
+                        for alias in item.get("aliases", []):
+                            new_entity.aliases.add(alias)
                         new_entity.evidence.extend(item["evidence"])
                         state.known_entities[canonical] = new_entity
                     else:
@@ -156,8 +158,10 @@ class DeepResearchOrchestrator:
                         if not entity.clinical_phase:
                             entity.clinical_phase = item.get("clinical_phase")
 
+
                         # Add new aliases and evidence to existing entity
-                        entity.aliases.add(item["alias"])
+                        for alias in item.get("aliases", []):
+                            entity.aliases.add(alias)
                         entity.evidence.extend(item["evidence"])
 
             state.iteration_count += 1

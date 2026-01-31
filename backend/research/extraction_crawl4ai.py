@@ -119,8 +119,9 @@ For EACH asset you extract, apply these inference rules to populate attributes:
 
 **Geography Extraction (Regional Focus):**
 - IF text mentions country name with asset → geography = country
-- IF Chinese company or ChiCTR trial → geography = "China"
-- IF Japanese company or PMDA filing → geography = "Japan"
+- IF company HQ location is known/mentioned → geography = company location
+- IF trial registry ID prefix is known (e.g. ChiCTR -> China, JPRN -> Japan, NCT -> US/Global, EudraCT -> EU) → geography = region
+- Extract ANY mentioned geography or region associated with the asset's development.
 
 **Indication Extraction (Disease/Condition):**
 - IF disease name appears with asset → indication = disease
@@ -201,231 +202,256 @@ class Crawl4AIExtractor:
         self.research_id = research_id or "default"
         self.logger = get_session_logger(self.research_id) if research_id else None
 
-    async def extract_from_html(
-        self, url: str, research_query: str, max_retries: int = 2
-    ) -> tuple[dict[str, Any], float]:
+    async def extract_batch(
+        self, urls: list[str], research_query: str
+    ) -> tuple[list[dict[str, Any]], float]:
         """
-        Extracts assets from an HTML page using Crawl4AI.
-
-        Args:
-            url: The URL to crawl and extract from
-            research_query: The research topic/query for context-aware extraction
-            max_retries: Number of retries on failure
-
-        Returns:
-            Dictionary with 'entities' (list of assets) and 'links' (discovered URLs)
+        Processes a batch of URLs in parallel using Crawl4AI's arun_many.
+        Reuse browser and crawler session for efficiency.
         """
-        # Generate topic-aware extraction instruction
+        if not urls:
+            return [], 0.0
+
+        # Generate topic-aware extraction instruction (shared for the batch)
         extraction_instruction = generate_extraction_instruction(research_query)
 
         # Configure LLM extraction strategy
+        model_provider = os.getenv("EXTRACTION_MODEL", "gemini-2.5-flash-lite")
+        if not model_provider.startswith("gemini/"):
+            model_provider = f"gemini/{model_provider}"
+
         llm_strategy = LLMExtractionStrategy(
             llm_config=LLMConfig(
-                provider="gemini/gemini-2.5-flash-lite-preview-09-2025",
+                provider=model_provider,
                 api_token=os.getenv("GEMINI_API_KEY"),
             ),
             schema=AssetExtractionSchema.model_json_schema(),
             extraction_type="schema",
-            instruction=extraction_instruction,  # Use dynamic instruction
-            chunk_token_threshold=4000,  # Gemini Flash can handle larger contexts
-            overlap_rate=0.1,  # 10% overlap for context continuity
-            apply_chunking=True,
-            input_format="markdown",  # Cleaner than HTML
-            extra_args={"temperature": 0.0},  # Deterministic extraction
+            instruction=extraction_instruction,
+            # OPTIMIZATION: Gemini Flash has 1M+ context. 
+            # Process typical pages in one shot (no chunking) for speed and context coherence.
+            chunk_token_threshold=100000, 
+            overlap_rate=0.0,
+            apply_chunking=True, # Only triggers for massive documents > 100k tokens
+            input_format="fit_markdown", # Use filtered markdown to reduce noise
+            extra_args={"temperature": 0.0},
         )
 
         # Configure crawler
+        page_timeout = int(os.getenv("CRAWL_TIMEOUT", "60000")) # Fail faster (60s)
         crawl_config = CrawlerRunConfig(
             extraction_strategy=llm_strategy,
-            cache_mode=CacheMode.BYPASS,  # Always fetch fresh content
-            word_count_threshold=10,  # Min words to consider valid content
-            page_timeout=120000,  # Increase to 120s for slow academic sites
+            cache_mode=CacheMode.BYPASS,
+            word_count_threshold=10,
+            page_timeout=page_timeout,
+            # Robustness settings
+            magic=True,
+            remove_overlay_elements=True,
+            excluded_tags=['nav', 'footer', 'header', 'aside', 'script', 'style'],
         )
 
         browser_config = BrowserConfig(
             headless=True,
             verbose=False,
+            # Block images/fonts to speed up load time since we only need text
+            text_mode=True, 
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
 
-        entities = []
-        links = []
+        total_cost = 0.0
+        all_results = []
+
+        # Filter out empty URLs before calling arun_many
+        original_count = len(urls)
+        urls = [u for u in urls if u and u.strip()]
+        if len(urls) < original_count and self.logger:
+            self.logger.warning("Crawl4AIExtractor filtered out %d empty URLs from batch", original_count - len(urls))
+
+        if not urls:
+            return [], 0.0
 
         try:
             async with AsyncWebCrawler(config=browser_config) as crawler:
-                result = await crawler.arun(url=url, config=crawl_config)
+                results = await crawler.arun_many(urls=urls, config=crawl_config)
 
-                if self.logger:
-                    log_api_call(
-                        self.logger,
-                        "crawl4ai",
-                        "extract",
-                        {"url": url},
-                        {"success": result.success, "status_code": result.status_code},
-                    )
-
-                if not result.success:
-                    if self.logger:
-                        self.logger.warning(
-                            "Crawl4AI failed for %s: %s", url, result.error_message
-                        )
-                    return {"entities": [], "links": [], "is_pdf": False}, 0.0
-
-                # Detect if we got PDF content
-                final_url = result.url or url
-                markdown_content = result.markdown or ""
-
-                is_pdf_url = final_url.lower().endswith(".pdf")
-                is_pdf_content_marker = markdown_content.startswith("%PDF-")
-
-                if is_pdf_url or is_pdf_content_marker:
-                    if self.logger:
-                        self.logger.info(
-                            "PDF detected at %s. Downloading binary for LlamaExtract.",
-                            url,
-                        )
-
-                    # Create a temporary file to store the PDF
-                    fd, temp_path = tempfile.mkstemp(suffix=".pdf")
-                    os.close(fd)
-
-                    try:
-                        async with httpx.AsyncClient(follow_redirects=True) as client:
-                            response = await client.get(url, timeout=30.0)
-                            response.raise_for_status()
-                            with open(temp_path, "wb") as f:
-                                f.write(response.content)
-
-                        return {
-                            "entities": [],
-                            "links": [],
-                            "is_pdf": True,
-                            "pdf_path": temp_path,
-                        }, 0.0
-                    except Exception as e:
-                        if self.logger:
-                            self.logger.error(
-                                "Failed to download PDF from %s: %s", url, e
-                            )
-                        if os.path.exists(temp_path):
-                            os.remove(temp_path)
-                        # Continue to normal extraction if download fails (might be a false positive PDF)
-                        pass
-
-                # Parse extracted content (JSON from LLM)
-                if result.extracted_content:
-                    if self.logger:
-                        log_api_call(
-                            self.logger,
-                            "crawl4ai",
-                            "data_parsed",
-                            {"url": url},
-                            {
-                                "content": result.extracted_content[:2000]
-                            },  # Log snippet of data
-                        )
-                    try:
-                        extracted_data = json.loads(result.extracted_content)
-
-                        # Handle both single dict and list of dicts
-                        if isinstance(extracted_data, dict):
-                            extracted_data = [extracted_data]
-
-                        # List of generic terms to filter out if they appear as canonical names
-                        generic_terms = {
-                            "none",
-                            "unknown",
-                            "n/a",
-                            "inhibitor",
-                            "inhibitors",
-                            "molecule",
-                            "molecules",
-                            "asset",
-                            "assets",
-                        }
-
-                        # Convert to entity format
-                        for asset_data in extracted_data:
-                            canonical = asset_data.get("canonical_name")
-                            if not canonical or str(canonical).lower() in generic_terms:
-                                continue  # Skip empty or generic extractions
-
-                            # Additional check: if canonical is too long or looks like a sentence, skip
-                            if len(str(canonical)) > 100:
-                                continue
-
-                            # Create evidence snippet
-                            # Use specific excerpt if provided by LLM, else fallback to slashing
-                            excerpt = (
-                                asset_data.get("evidence_excerpt")
-                                or (result.markdown or "")[:500]
-                            )
-
-                            snippet = EvidenceSnippet(
-                                source_url=url,
-                                content=excerpt,
-                                timestamp=datetime.utcnow().isoformat() + "Z",
-                            )
-
-                            # Create entity record for canonical name
-                            all_names = [canonical] + (asset_data.get("aliases") or [])
-                            for name in all_names:
-                                if name and name.strip():  # Skip empty aliases
-                                    entities.append(
-                                        {
-                                            "canonical": canonical,
-                                            "alias": name,
-                                            "attributes": {
-                                                "target": asset_data.get("target"),
-                                                "modality": asset_data.get("modality"),
-                                                "product_stage": asset_data.get(
-                                                    "product_stage"
-                                                ),
-                                                "indication": asset_data.get(
-                                                    "indication"
-                                                ),
-                                                "geography": asset_data.get(
-                                                    "geography"
-                                                ),
-                                                "owner": asset_data.get("owner"),
-                                            },
-                                            "evidence": [snippet],
-                                        }
-                                    )
-
-                    except json.JSONDecodeError as e:
-                        if self.logger:
-                            self.logger.error(
-                                "Failed to parse extraction JSON for %s: %s", url, e
-                            )
-
-                # Extract links from the page
-                if result.links:
-                    # Filter for HTTP(S) links only
-                    links = [
-                        link["href"]
-                        for link in result.links.get("internal", [])
-                        + result.links.get("external", [])
-                        if link.get("href", "").startswith("http")
-                    ]
+                for i, result in enumerate(results):
+                    url = urls[i]
+                    processed_res, cost = await self._process_single_result(result, url)
+                    total_cost += cost
+                    all_results.append(processed_res)
 
         except Exception as e:
             if self.logger:
-                self.logger.error("Crawl4AI extraction error for %s: %s", url, e)
+                self.logger.error("Batch Crawl4AI extraction error: %s", e)
 
-        # Calculate cost based on estimated usage (markdown len input + json output)
+        return all_results, total_cost
+
+    async def _process_single_result(
+        self, result: Any, url: str
+    ) -> tuple[dict[str, Any], float]:
+        """Helper to process a single Crawl4AI result into the system format."""
+        entities = []
+        links = []
+
+        if self.logger:
+            log_api_call(
+                self.logger,
+                "crawl4ai",
+                "extract",
+                {"url": url},
+                {"success": result.success, "status_code": result.status_code},
+            )
+
+        if not result.success:
+            if self.logger:
+                self.logger.warning(
+                    "Crawl4AI failed for URL [%s]: %s", url, result.error_message
+                )
+            return {"entities": [], "links": [], "is_pdf": False, "url": url}, 0.0
+
+        # Detect if we got PDF content
+        final_url = result.url or url
+        markdown_content = result.markdown or ""
+
+        is_pdf_url = final_url.lower().endswith(".pdf")
+        is_pdf_content_marker = markdown_content.startswith("%PDF-")
+
+        if is_pdf_url or is_pdf_content_marker:
+            if self.logger:
+                self.logger.info(
+                    "PDF detected at %s. Downloading binary for LlamaExtract.",
+                    url,
+                )
+
+            fd, temp_path = tempfile.mkstemp(suffix=".pdf")
+            os.close(fd)
+
+            try:
+                async with httpx.AsyncClient(follow_redirects=True) as client:
+                    response = await client.get(url, timeout=30.0)
+                    response.raise_for_status()
+                    with open(temp_path, "wb") as f:
+                        f.write(response.content)
+
+                return {
+                    "entities": [],
+                    "links": [],
+                    "is_pdf": True,
+                    "pdf_path": temp_path,
+                    "url": url,
+                }, 0.0
+            except Exception as e:
+                if self.logger:
+                    self.logger.error("Failed to download PDF from %s: %s", url, e)
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+                pass
+
+        # Parse extracted content (JSON from LLM)
+        if result.extracted_content:
+            if self.logger:
+                log_api_call(
+                    self.logger,
+                    "crawl4ai",
+                    "data_parsed",
+                    {"url": url},
+                    {"content": result.extracted_content[:2000]},
+                )
+            try:
+                extracted_data = json.loads(result.extracted_content)
+
+                if isinstance(extracted_data, dict):
+                    extracted_data = [extracted_data]
+
+                generic_terms = {
+                    "none",
+                    "unknown",
+                    "n/a",
+                    "inhibitor",
+                    "inhibitors",
+                    "molecule",
+                    "molecules",
+                    "asset",
+                    "assets",
+                }
+
+                for asset_data in extracted_data:
+                    canonical = asset_data.get("canonical_name")
+                    if not canonical or str(canonical).lower() in generic_terms:
+                        continue
+
+                    if len(str(canonical)) > 100:
+                        continue
+
+                    excerpt = asset_data.get("evidence_excerpt") or (result.markdown or "")[:500]
+
+                    snippet = EvidenceSnippet(
+                        source_url=url,
+                        content=excerpt,
+                        timestamp=datetime.utcnow().isoformat() + "Z",
+                    )
+
+                    # Normalize: Emit single entity per canonical
+                    
+                    # Gather all unique names for this asset
+                    unique_names_set = set()
+                    unique_names_set.add(canonical)
+                    for n in (asset_data.get("aliases") or []):
+                        if n and n.strip():
+                            unique_names_set.add(n.strip())
+                    
+                    # Create "aliases" list excluding the canonical itself
+                    aliases_list = [n for n in unique_names_set if n != canonical]
+                    
+                    # Create the entity dictionary with the normalized schema
+                    entity = {
+                        "canonical": canonical, # Normalized key
+                        "aliases": aliases_list,
+                        "attributes": {
+                            "target": asset_data.get("target"),
+                            "modality": asset_data.get("modality"),
+                            "product_stage": asset_data.get("product_stage"),
+                            "indication": asset_data.get("indication"),
+                            "geography": asset_data.get("geography"),
+                            "owner": asset_data.get("owner"),
+                        },
+                        "evidence": [snippet] # Attach the snippet here
+                    }
+                    entities.append(entity)
+
+            except json.JSONDecodeError as e:
+                if self.logger:
+                    self.logger.error("Failed to parse extraction JSON for %s: %s", url, e)
+
+        if result.links:
+            links = [
+                link["href"]
+                for link in result.links.get("internal", []) + result.links.get("external", [])
+                if link.get("href", "").startswith("http")
+            ]
+
+        # Calculate cost
         try:
-            # If markdown_content not defined in scope, assume 0
-            input_len = len(locals().get("markdown_content") or "")
-            output_len = (
-                len(locals().get("result", {}).extracted_content or "")
-                if locals().get("result")
-                else 0
-            )
-            cost = calculate_llm_cost(
-                "gemini-2.5-flash-lite", input_len // 4, output_len // 4
-            )
+            input_len = len(markdown_content)
+            output_len = len(result.extracted_content or "")
+            cost = calculate_llm_cost("gemini-2.5-flash-lite", input_len // 4, output_len // 4)
         except Exception:
             cost = 0.0
 
-        return {"entities": entities, "links": links, "is_pdf": False}, cost
+        return {"entities": entities, "links": links, "is_pdf": False, "url": url}, cost
+
+    async def extract_from_html(
+        self, url: str, research_query: str, max_retries: int = 2
+    ) -> tuple[dict[str, Any], float]:
+        """
+        Legacy single-URL extraction, now wraps _process_single_result but with single-use browser.
+        (For compatibility during migration or special cases)
+        """
+        if not url or not url.strip():
+            return {"entities": [], "links": [], "is_pdf": False, "url": url}, 0.0
+
+        # Reuse the batch logic for a batch of 1 for consistency
+        res, cost = await self.extract_batch([url], research_query)
+        if res:
+            return res[0], cost
+        return {"entities": [], "links": [], "is_pdf": False, "url": url}, 0.0

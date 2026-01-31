@@ -105,9 +105,17 @@ class ResearchRepository:
 
         await self.session.commit()
 
-        # Update relational tables for Entities and Evidence
-        for entity in state.known_entities.values():
-            await self.save_entity(entity)
+        # OPTIMIZATION: We no longer save all entities here.
+        # Entities are now saved incrementally by the workers as they are discovered.
+        # This prevents O(N) DB writes on every state save.
+        
+    async def save_entities_batch(self, entities: list[Entity]):
+        """
+        Saves a batch of entities. 
+        Intended to be called with *newly discovered* entities from a worker iteration.
+        """
+        for entity in entities:
+             await self.save_entity(entity)
 
     async def save_entity(self, entity: Entity):
         """
@@ -116,69 +124,66 @@ class ResearchRepository:
         Args:
             entity: The Entity domain model to save.
         """
-        # Check if exists (with evidence loaded for deduplication)
-        stmt = (
+        from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+        from sqlalchemy import insert
+
+        # Check dialect to decide on upsert strategy
+        bind = self.session.get_bind()
+        
+        if bind.dialect.name == "postgresql":
+            # PostgreSQL-specific upsert
+            stmt = postgresql_insert(EntityModel).values(**entity_data)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["canonical_name"],
+                set_=entity_data
+            )
+            await self.session.execute(stmt)
+        else:
+             # Dialect-agnostic "upsert" simulation for SQLite
+             # We check existence and either update or insert
+             stmt_check = select(EntityModel).where(EntityModel.canonical_name == entity.canonical_name)
+             result_check = await self.session.execute(stmt_check)
+             existing_obj = result_check.scalar_one_or_none()
+             
+             if existing_obj:
+                 # Update existing
+                 for k, v in entity_data.items():
+                     if hasattr(existing_obj, k):
+                         setattr(existing_obj, k, v)
+             else:
+                 # Insert new
+                 new_obj = EntityModel(**entity_data)
+                 self.session.add(new_obj)
+        
+        # Handle evidence separately (append-only)
+        # We need to fetch the entity (now guaranteed to exist) to manage relationships
+        # Or simpler: just insert evidence ignoring duplicates if we had a unique constraint on evidence
+        # But evidence table might not have unique constraint on (entity_name, source_url, content). 
+        # Let's stick to the current logic for evidence but re-fetch to be safe.
+        
+        # Re-fetch to get the ORM object and manage evidence relationship
+        current_entity_stmt = (
             select(EntityModel)
             .options(selectinload(EntityModel.evidence))
             .where(EntityModel.canonical_name == entity.canonical_name)
         )
-        result = await self.session.execute(stmt)
-        existing = result.scalar_one_or_none()
+        result = await self.session.execute(current_entity_stmt)
+        db_obj = result.scalar_one()
 
-        if existing:
-            # Update attributes and count
-            existing.attributes = entity.attributes
-            existing.aliases = list(entity.aliases)
-            existing.mention_count = entity.mention_count
+        # Append ONLY new evidence
+        existing_signatures = {(e.source_url, e.content) for e in db_obj.evidence}
 
-            # Update verification status
-            existing.verification_status = entity.verification_status  # type: ignore
-            existing.rejection_reason = entity.rejection_reason  # type: ignore
-            existing.confidence_score = entity.confidence_score
-
-            # Append ONLY new evidence
-            existing_signatures = {(e.source_url, e.content) for e in existing.evidence}
-
-            for ev in entity.evidence:
-                if (ev.source_url, ev.content) not in existing_signatures:
-                    db_ev = EvidenceModel(
-                        entity_name=entity.canonical_name,
-                        source_url=ev.source_url,
-                        content=ev.content,
-                        timestamp=ev.timestamp,
-                    )
-                    # We can append to existing.evidence collection
-                    existing.evidence.append(db_ev)
-                    existing_signatures.add((ev.source_url, ev.content))
-
-        else:
-            # Create new
-            db_entity = EntityModel(
-                canonical_name=entity.canonical_name,
-                attributes=entity.attributes,
-                aliases=list(entity.aliases),
-                mention_count=entity.mention_count,
-                verification_status=entity.verification_status,
-                rejection_reason=entity.rejection_reason,
-                confidence_score=entity.confidence_score,
-            )
-            self.session.add(db_entity)
-            # Flush not strictly needed if we add evidence via relationship, but safer
-            # to just add evidence objects directly or via relationship.
-            # Using relationship on new object:
-
-            db_evidence_list = []
-            for ev in entity.evidence:
+        for ev in entity.evidence:
+            if (ev.source_url, ev.content) not in existing_signatures:
                 db_ev = EvidenceModel(
                     entity_name=entity.canonical_name,
                     source_url=ev.source_url,
                     content=ev.content,
                     timestamp=ev.timestamp,
                 )
-                db_evidence_list.append(db_ev)
-
-            db_entity.evidence = db_evidence_list
-
+                db_obj.evidence.append(db_ev)
+                existing_signatures.add((ev.source_url, ev.content))
+        
         await self.session.commit()
 
     async def get_entity(self, canonical_name: str) -> Optional[Entity]:

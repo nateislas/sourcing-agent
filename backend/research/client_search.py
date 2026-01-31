@@ -84,29 +84,76 @@ class PerplexitySearchClient:
                 for res in query_results:
                     # Handle both tuple format (title, url, snippet) and object format
                     if isinstance(res, tuple):
-                        title, url, snippet = res
-                        results.append(
-                            SearchResult(
-                                title=title,
-                                url=url,
-                                snippet=snippet,
-                                source="perplexity",
-                            )
-                        )
+                        if len(res) == 3:
+                            title, url, snippet = res
+                        elif len(res) == 2:
+                            # Handle case where only 2 values are returned (e.g. url, snippet)
+                            # Assuming first is val1, second is val2. 
+                            # If we look at previous 3-val, it was title, url, snippet.
+                            # If 2 val, likely url, snippet or title, snippet.
+                            # Let's try to be safe.
+                            val1, val2 = res
+                            if str(val1).startswith(('http', 'https')):
+                                url = val1
+                                snippet = val2
+                                title = "No title"
+                            elif str(val2).startswith(('http', 'https')):
+                                title = val1
+                                url = val2
+                                snippet = ""
+                            else:
+                                # Fallback
+                                title = val1
+                                snippet = val2
+                                url = ""
+                        else:
+                            # Unexpected tuple length
+                            continue
+                            
+                            
+                        if url.startswith(('http', 'https')):
+                             results.append(
+                                 SearchResult(
+                                     title=title,
+                                     url=url,
+                                     snippet=snippet,
+                                     source="perplexity",
+                                 )
+                             )
                     else:
-                        results.append(
-                            SearchResult(
-                                title=res.title,
-                                url=res.url,
-                                snippet=res.snippet,
-                                source="perplexity",
-                            )
-                        )
+                            name_or_url = res.url or ""
+                            if name_or_url.startswith(('http', 'https')):
+                                results.append(
+                                    SearchResult(
+                                        title=res.title,
+                                        url=name_or_url,
+                                        snippet=res.snippet,
+                                        source="perplexity",
+                                    )
+                                )
         else:
             for res in response.results:
                 # Handle both tuple format (title, url, snippet) and object format
                 if isinstance(res, tuple):
-                    title, url, snippet = res
+                    if len(res) == 3:
+                        title, url, snippet = res
+                    elif len(res) == 2:
+                        val1, val2 = res
+                        if str(val1).startswith(('http', 'https')):
+                            url = val1
+                            snippet = val2
+                            title = "No title"
+                        elif str(val2).startswith(('http', 'https')):
+                            title = val1
+                            url = val2
+                            snippet = ""
+                        else:
+                            title = val1
+                            snippet = val2
+                            url = ""
+                    else:
+                        continue
+                        
                     results.append(
                         SearchResult(
                             title=title,
@@ -116,14 +163,15 @@ class PerplexitySearchClient:
                         )
                     )
                 else:
-                    results.append(
-                        SearchResult(
-                            title=res.title,
-                            url=res.url,
-                            snippet=res.snippet,
-                            source="perplexity",
+                    if res.url and str(res.url).strip().startswith(('http', 'https')):
+                        results.append(
+                            SearchResult(
+                                title=res.title,
+                                url=res.url,
+                                snippet=res.snippet,
+                                source="perplexity",
+                            )
                         )
-                    )
         return results
 
 
@@ -197,13 +245,17 @@ class TavilySearchClient:
                     self.logger.error("Tavily search failed: %s", response)
                 continue
             for res in response.get("results", []):
-                results.append(
-                    SearchResult(
-                        title=res.get("title", ""),
-                        url=res.get("url", ""),
-                        snippet=res.get("content", ""),
-                        source="tavily",
-                        raw_content=res.get("raw_content") if include_raw_content else None,
+                url = res.get("url", "")
+                if url and url.strip() and url.lower().startswith(('http://', 'https://')):
+                    results.append(
+                        SearchResult(
+                            title=res.get("title", ""),
+                            url=url,
+                            snippet=res.get("content", ""),
+                            source="tavily",
+                            raw_content=res.get("raw_content") if include_raw_content else None,
+                        )
                     )
-                )
+                else:
+                    pass # Skip non-http URLs or empty
         return results

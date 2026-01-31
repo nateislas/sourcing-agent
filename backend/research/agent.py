@@ -36,10 +36,13 @@ class ResearchAgent:
         model_name: str | None = None,
         timeout: int | None = None,
     ):
-        self.model_name = model_name or os.getenv(
-            "RESEARCH_MODEL", "models/gemini-3-flash-preview"
-        )
-        self.timeout = timeout or int(os.getenv("RESEARCH_TIMEOUT", "60"))
+        self.model_name = model_name or os.getenv("RESEARCH_MODEL")
+        if not self.model_name:
+            logger.warning("RESEARCH_MODEL not set in .env. Falling back to gemini-2.5-flash-lite.")
+            self.model_name = "gemini-2.5-flash-lite"
+            
+        env_timeout = os.getenv("RESEARCH_TIMEOUT")
+        self.timeout = timeout or (int(env_timeout) if env_timeout else 60)
 
     async def generate_initial_plan(
         self, topic: str, research_id: str | None = None
@@ -140,7 +143,8 @@ class ResearchAgent:
         )
 
         # Call LLM
-        llm = get_llm(model_name=self.model_name)
+        model_name = self.model_name
+        llm = get_llm(model_name=model_name)
         messages = [ChatMessage(role="user", content=prompt)]
 
         try:
