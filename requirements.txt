@@ -18,7 +18,7 @@ tavily-python
 llama-cloud>=1.1.0
 trafilatura
 beautifulsoup4
-crawl4ai==0.4.247
+crawl4ai>=0.7.4
 pillow
 fastapi
 uvicorn

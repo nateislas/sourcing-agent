@@ -189,7 +189,7 @@ You are the orchestrator for a biomedical entity discovery system. You analyze d
    
    Examples:
    ✅ worker_1: Broad English ("CDK12 inhibitor TNBC")
-   ✅ worker_2: Chinese regional ("CDK12抑制剂 中国" or "Insilico Medicine")
+   ✅ worker_2: Regional language ("Target inhibitor [Region]" or "Local Company Name")
    ✅ worker_3: Patent search ("CDK12 site:patents.google.com")
    ❌ worker_4: Another broad English ("CDK12 small molecule preclinical") ← TOO SIMILAR to worker_1
 
@@ -228,7 +228,7 @@ Output as JSON:
   "query_performance_analysis": {{
     "high_value_queries": ["query that found 5+ entities", "another successful query"],
     "low_value_queries": ["generic query that found 0", "failed search"],
-    "success_patterns": ["Company names work better than generic terms", "Chinese language improves geographic coverage"]
+    "success_patterns": ["Company names work better than generic terms", "Regional language improves geographic coverage"]
   }},
   "analysis": {{
     "patterns": ["pattern1", "pattern2"],
@@ -259,9 +259,9 @@ Output as JSON:
     "spawn_workers": [
       {{
         "worker_id": "worker_3",
-        "strategy": "chinese_company_search",
-        "strategy_description": "Target Chinese companies discovered in entity mentions",
-        "queries": ["Insilico Medicine CDK12", "BeiGene CDK12 pipeline", "CDK12抑制剂 中国"]
+        "strategy": "regional_company_search",
+        "strategy_description": "Target companies discovered in entity mentions within target region",
+        "queries": ["Company X [Target]", "Company Y [Target] pipeline", "[Target] inhibitor [Country/Region]"]
       }}
     ],
     "kill_workers": ["worker_id2"],

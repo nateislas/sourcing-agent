@@ -119,8 +119,9 @@ For EACH asset you extract, apply these inference rules to populate attributes:
 
 **Geography Extraction (Regional Focus):**
 - IF text mentions country name with asset → geography = country
-- IF Chinese company or ChiCTR trial → geography = "China"
-- IF Japanese company or PMDA filing → geography = "Japan"
+- IF company HQ location is known/mentioned → geography = company location
+- IF trial registry ID prefix is known (e.g. ChiCTR -> China, JPRN -> Japan, NCT -> US/Global, EudraCT -> EU) → geography = region
+- Extract ANY mentioned geography or region associated with the asset's development.
 
 **Indication Extraction (Disease/Condition):**
 - IF disease name appears with asset → indication = disease
@@ -236,8 +237,6 @@ class Crawl4AIExtractor:
             extra_args={"temperature": 0.0},
         )
 
-        from crawl4ai.content_filter_strategy import PruningContentFilter
-
         # Configure crawler
         page_timeout = int(os.getenv("CRAWL_TIMEOUT", "60000")) # Fail faster (60s)
         crawl_config = CrawlerRunConfig(
@@ -248,12 +247,6 @@ class Crawl4AIExtractor:
             # Robustness settings
             magic=True,
             remove_overlay_elements=True,
-            # Content filtering to feed cleaner data to LLM
-            content_filter=PruningContentFilter(
-                threshold=0.48, 
-                threshold_type="fixed", 
-                min_word_threshold=50
-            ),
             excluded_tags=['nav', 'footer', 'header', 'aside', 'script', 'style'],
         )
 
@@ -404,7 +397,7 @@ class Crawl4AIExtractor:
                     for name in unique_names:
                         entities.append(
                             {
-                                "canonical": canonical,
+                                "canonical_name": canonical,
                                 "alias": name,
                                 "attributes": {
                                     "target": asset_data.get("target"),
