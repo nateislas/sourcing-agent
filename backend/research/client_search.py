@@ -110,14 +110,16 @@ class PerplexitySearchClient:
                             # Unexpected tuple length
                             continue
                             
-                        results.append(
-                            SearchResult(
-                                title=title,
-                                url=url,
-                                snippet=snippet,
-                                source="perplexity",
-                            )
-                        )
+                            
+                        if url.startswith(('http', 'https')):
+                             results.append(
+                                 SearchResult(
+                                     title=title,
+                                     url=url,
+                                     snippet=snippet,
+                                     source="perplexity",
+                                 )
+                             )
                     else:
                             name_or_url = res.url or ""
                             if name_or_url.startswith(('http', 'https')):
@@ -244,7 +246,7 @@ class TavilySearchClient:
                 continue
             for res in response.get("results", []):
                 url = res.get("url", "")
-                if url and url.strip():
+                if url and url.strip() and url.lower().startswith(('http://', 'https://')):
                     results.append(
                         SearchResult(
                             title=res.get("title", ""),
@@ -254,4 +256,6 @@ class TavilySearchClient:
                             raw_content=res.get("raw_content") if include_raw_content else None,
                         )
                     )
+                else:
+                    pass # Skip non-http URLs or empty
         return results

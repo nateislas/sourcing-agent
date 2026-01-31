@@ -3,6 +3,7 @@ LlamaIndex Workflow for Initial Research Planning.
 """
 
 import json
+import os
 
 from llama_index.core.workflow import (
     StartEvent,

@@ -68,7 +68,7 @@ export const WorkerDetailModal: React.FC<Props> = ({ worker, isOpen, onClose }) 
                                     {worker.status}
                                 </div>
                                 <div className="text-[10px] text-muted-foreground mt-1">
-                                    Last Check: {new Date().toLocaleTimeString()}
+                                    Local Time: {new Date().toLocaleTimeString()}
                                 </div>
                             </div>
                             <div className="bg-muted/50 p-4 rounded-2xl border text-center">

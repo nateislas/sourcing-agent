@@ -391,25 +391,33 @@ class Crawl4AIExtractor:
                         timestamp=datetime.utcnow().isoformat() + "Z",
                     )
 
-                    all_names = [canonical] + (asset_data.get("aliases") or [])
-                    unique_names = list(dict.fromkeys([n.strip() for n in all_names if n and n.strip()]))
-
-                    for name in unique_names:
-                        entities.append(
-                            {
-                                "canonical_name": canonical,
-                                "alias": name,
-                                "attributes": {
-                                    "target": asset_data.get("target"),
-                                    "modality": asset_data.get("modality"),
-                                    "product_stage": asset_data.get("product_stage"),
-                                    "indication": asset_data.get("indication"),
-                                    "geography": asset_data.get("geography"),
-                                    "owner": asset_data.get("owner"),
-                                },
-                                "evidence": [snippet] if name == canonical else [],
-                            }
-                        )
+                    # Normalize: Emit single entity per canonical
+                    
+                    # Gather all unique names for this asset
+                    unique_names_set = set()
+                    unique_names_set.add(canonical)
+                    for n in (asset_data.get("aliases") or []):
+                        if n and n.strip():
+                            unique_names_set.add(n.strip())
+                    
+                    # Create "aliases" list excluding the canonical itself
+                    aliases_list = [n for n in unique_names_set if n != canonical]
+                    
+                    # Create the entity dictionary with the normalized schema
+                    entity = {
+                        "canonical": canonical, # Normalized key
+                        "aliases": aliases_list,
+                        "attributes": {
+                            "target": asset_data.get("target"),
+                            "modality": asset_data.get("modality"),
+                            "product_stage": asset_data.get("product_stage"),
+                            "indication": asset_data.get("indication"),
+                            "geography": asset_data.get("geography"),
+                            "owner": asset_data.get("owner"),
+                        },
+                        "evidence": [snippet] # Attach the snippet here
+                    }
+                    entities.append(entity)
 
             except json.JSONDecodeError as e:
                 if self.logger:

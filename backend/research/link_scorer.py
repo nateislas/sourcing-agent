@@ -198,12 +198,17 @@ class LinkScorer:
             if match:
                 try:
                     return json.loads(match.group(0))
-                except:
-                    pass
+                except json.JSONDecodeError as e:
+                    if self.logger:
+                        self.logger.error(f"Failed to parse JSON from regex match: {e}. Text: {match.group(0)[:100]}...")
+                except Exception as e:
+                     if self.logger:
+                        self.logger.error(f"Unexpected error parsing JSON from regex match: {e}")
             return []
 
-    async def score_link(self, *args, **kwargs):
-        """Legacy method for single link scoring, now deprecated."""
-        # For backward compatibility if anything else calls it
-        results = await self.score_links_batch([{"url": kwargs.get("url")}], kwargs.get("research_query", ""))
+    async def score_link(self, url: str, research_query: str = "", context: dict | None = None, **extra):
+        """Legacy method for single link scoring."""
+        # Build item for batch processing
+        item = {"url": url, "context": str(context) if context else "", **extra}
+        results = await self.score_links_batch([item], research_query)
         return results[0] if results else {"score": 5, "reasoning": "Failed", "cost": 0.0}

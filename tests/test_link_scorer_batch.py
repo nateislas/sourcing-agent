@@ -2,8 +2,15 @@
 import asyncio
 import os
 import logging
+import os
+import pytest
 from backend.research.link_scorer import LinkScorer
 
+@pytest.mark.skipif(
+    os.getenv("RUN_INTEGRATION_TESTS") != "1",
+    reason="Integration test requiring live LLM calls"
+)
+@pytest.mark.asyncio
 async def test_batch_scoring():
     logging.basicConfig(level=logging.INFO)
     scorer = LinkScorer(research_id="test_run")

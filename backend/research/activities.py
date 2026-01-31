@@ -255,59 +255,86 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
             safe_get_logger().info("Worker %s processing batch of %d URLs", worker_state.id, len(chunk))
             
             # Mark all as visited immediately
-            for url in chunk:
-                await state_manager.mark_url_visited(url, research_id=worker_state.research_id)
-                domain = urlparse(url).netloc
-                worker_state.explored_domains.add(domain)
+            # Check if domain has been explored recently (simple heuristic to avoid hammering)
+            # if domain in worker_state.explored_domains:
+            #    pass
 
-            crawl_extractor = Crawl4AIExtractor(research_id=worker_state.research_id)
-            batch_results, batch_cost = await crawl_extractor.extract_batch(
-                urls=chunk,
-                research_query=query
-            )
-            iteration_cost += batch_cost
+            try:
+                crawl_extractor = Crawl4AIExtractor(research_id=worker_state.research_id)
+                batch_results, batch_cost = await crawl_extractor.extract_batch(
+                    urls=chunk,
+                    research_query=query
+                )
+                iteration_cost += batch_cost
 
-            # Process individual results from the batch
-            for extraction_res in batch_results:
-                current_url = extraction_res.get("url")
-                
-                # Handle PDF Fallback (Sequential for now, but rare)
-                if extraction_res.get("is_pdf", False):
-                    pdf_path = extraction_res.get("pdf_path")
-                    if pdf_path and os.path.exists(pdf_path):
-                        safe_get_logger().info("PDF detected, routing to LlamaExtract: %s", current_url)
-                        try:
-                            pdf_extraction, pdf_cost = await entity_extractor.extract_entities(
-                                pdf_path, current_url, raw_html=None
-                            )
-                            # Merge entities from PDF into the results
-                            extraction_res["entities"] = pdf_extraction.get("entities", [])
-                            extraction_res["links"] = pdf_extraction.get("links", [])
-                            iteration_cost += pdf_cost
-                        finally:
-                            if os.path.exists(pdf_path):
-                                os.remove(pdf_path)
+                # Process individual results from the batch
+                for extraction_res in batch_results:
+                    current_url = extraction_res.get("url")
+                    
+                    # --- Success Path: Mark Visited ---
+                    await state_manager.mark_url_visited(current_url, research_id=worker_state.research_id)
+                    domain = urlparse(current_url).netloc
+                    worker_state.explored_domains.add(domain)
 
-                pages_fetched += 1
-                
-                # Process discovered entities
-                entities_from_this_url_canonical_names = []
-                entity_mark_tasks = []
-                for entry in extraction_res.get("entities", []):
-                    canonical = entry.get("canonical")
-                    if not canonical:
-                        continue
+                    # Handle PDF Fallback (Sequential for now, but rare)
+                    if extraction_res.get("is_pdf", False):
+                        pdf_path = extraction_res.get("pdf_path")
+                        if pdf_path and os.path.exists(pdf_path):
+                            safe_get_logger().info("PDF detected, routing to LlamaExtract: %s", current_url)
+                            try:
+                                pdf_extraction, pdf_cost = await entity_extractor.extract_entities(
+                                    pdf_path, current_url, raw_html=None
+                                )
+                                # Merge entities from PDF into the results
+                                extraction_res["entities"] = pdf_extraction.get("entities", [])
+                                extraction_res["links"] = pdf_extraction.get("links", [])
+                                iteration_cost += pdf_cost
+                            finally:
+                                if os.path.exists(pdf_path):
+                                    os.remove(pdf_path)
+                    
+                    pages_fetched += 1
+                    
+                    # Process discovered entities
+                    entities_from_this_url_canonical_names = []
+                    entity_mark_tasks = []
+                    
+                    for entry in extraction_res.get("entities", []):
+                        # Normalize schema
+                        canonical = entry.get("canonical") or entry.get("canonical_name")
+                        if not canonical:
+                            continue
 
-                    new_entities_found.append(entry)
-                    entities_from_this_url_canonical_names.append(canonical)
-                    entity_mark_tasks.append(state_manager.mark_entity_known(
-                        canonical, attributes=entry.get("attributes")
-                    ))
-                
-                # --- Parallel Entity Marking ---
-                if entity_mark_tasks:
-                    mark_results = await asyncio.gather(*entity_mark_tasks)
-                    globally_new_count += sum(1 for r in mark_results if r)
+                        aliases = entry.get("aliases", [])
+                        if not aliases and entry.get("alias"):
+                            aliases = [entry.get("alias")]
+                        
+                        # Ensure we have a valid entity dict
+                        normalized_entry = {
+                            "canonical": canonical,
+                            "aliases": aliases,
+                            "attributes": entry.get("attributes", {}),
+                            "evidence": entry.get("evidence", []) 
+                        }
+                        
+                        # Fix for downstream usage: extraction returns list of dicts, but we need consistent schema
+                        # We'll use the normalized entry for adding to new_entities_found
+                        
+                        new_entities_found.append(normalized_entry)
+                        entities_from_this_url_canonical_names.append(canonical)
+                        
+                        # mark_entity_known likely expects dict with "canonical" key based on usage elsewhere
+                        entity_mark_tasks.append(state_manager.mark_entity_known(
+                            normalized_entry
+                        ))
+                    
+                    # --- Parallel Entity Marking ---
+                    if entity_mark_tasks:
+                        mark_results = await asyncio.gather(*entity_mark_tasks)
+                        globally_new_count += sum(1 for r in mark_results if r)
+            except Exception as e:
+                safe_get_logger().error(f"Error extracting batch: {e}")
+                # We do NOT mark visited so we can retry later
 
                 # Track domain performance
                 source_domain = urlparse(current_url).netloc
@@ -444,25 +471,31 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
         # This allows us to avoid the expensive O(N) save in the main workflow.
         if new_entities_found:
              try:
-                 async with AsyncSessionLocal() as session:
-                     repo = ResearchRepository(session)
-                     # Convert dicts back to Entity objects for saving if needed, 
-                     # but wait, new_entities_found is a list of dicts (from extraction.py).
-                     # Repo expects Entity objects.
-                     
-                     entities_to_save = []
-                     for e_data in new_entities_found:
-                         # Extraction returns dicts, need to ensure compatibility
-                         # Entity(...) constructor
-                         # NOTE: e_data might contain 'evidence' as list of objects or dicts?
-                         # extraction.py returns Pydantic models usually or dicts.
-                         # Looking at extraction.py (not shown), it likely returns dicts.
-                         # Let's assume dicts and hydrate carefully.
-                         ent_obj = Entity(**e_data)
-                         entities_to_save.append(ent_obj)
-                     
-                     await repo.save_entities_batch(entities_to_save)
-                     safe_get_logger().info(f"Worker {worker_state.id} persisted {len(entities_to_save)} new entities.")
+                 # Batch persistence of all found entities
+                 # Hydrate into Entity objects, skipping malformed ones
+                 entities_to_save = []
+                 for e_data in new_entities_found:
+                     try:
+                         # Normalize field names if needed (handle both canonical and canonical_name)
+                         if "canonical" in e_data and "canonical_name" not in e_data:
+                             e_data["canonical_name"] = e_data["canonical"]
+                             
+                         # Remove 'canonical' if Entity model doesn't support it (using canonical_name)
+                         if "canonical" in e_data and "canonical_name" in e_data:
+                             e_data_copy = e_data.copy()
+                             e_data_copy.pop("canonical")
+                             e_data = e_data_copy
+
+                         entity_obj = Entity(**e_data)
+                         entities_to_save.append(entity_obj)
+                     except Exception as e:
+                          safe_get_logger().warning(f"Skipping malformed entity data during batch save: {e}")
+
+                 if entities_to_save:
+                     async with AsyncSessionLocal() as session:
+                         repo = ResearchRepository(session)
+                         await repo.save_entities_batch(entities_to_save)
+                         safe_get_logger().info(f"Worker {worker_state.id} persisted {len(entities_to_save)} new entities.")
              except Exception as e:
                  safe_get_logger().error(f"Failed to persist batch of entities: {e}")
 

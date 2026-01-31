@@ -64,7 +64,11 @@ class DatabaseStateManager(StateManager):
             try:
                 # Use ON CONFLICT DO NOTHING to avoid "duplicate key value" errors in logs
                 stmt = insert(VisitedURL).values(url=url, research_id=research_id)
-                stmt = stmt.on_conflict_do_nothing(index_elements=["url"])
+                # Ensure we handle checking unique constraint on (url, research_id) if defined
+                # If only url is unique in DB schema, this might fail if same URL used in diff research
+                # Assuming schema allows (url, research_id) uniqueness or we want per-research scope.
+                # User request suggests updating this call implies we want per-research scope.
+                stmt = stmt.on_conflict_do_nothing(index_elements=["url", "research_id"])
                 result = await session.execute(stmt)
                 await session.commit()
                 # rowcount is 1 if inserted, 0 if conflict
@@ -156,14 +160,22 @@ class RedisStateManager(StateManager):
     async def is_url_visited(self, url: str, research_id: str | None = None) -> bool:
         key = f"visited_urls:{research_id}" if research_id else "visited_urls"
         
-        # 1. Check Redis
-        if await self.redis.sismember(key, url):
-            return True
+        try:
+            # 1. Check Redis
+            import redis.exceptions
+            if await self.redis.sismember(key, url):
+                return True
+        except redis.exceptions.RedisError as e:
+            logger.warning(f"Redis error in is_url_visited: {e}")
             
-        # 2. Check DB (Cache Miss)
+        # 2. Check DB (Cache Miss or Redis Down)
+        # Note: We continue to DB even if Redis fails
         if await self.db_manager.is_url_visited(url, research_id):
-            # Populate cache
-            await self.redis.sadd(key, url)
+            try:
+                # Populate cache
+                await self.redis.sadd(key, url)
+            except redis.exceptions.RedisError as e:
+                logger.warning(f"Redis error populating cache in is_url_visited: {e}")
             return True
             
         return False
@@ -174,21 +186,31 @@ class RedisStateManager(StateManager):
         # Write-Through: Write to DB first
         is_new = await self.db_manager.mark_url_visited(url, research_id)
         
-        # Provide consistency: Add to Redis regardless of DB result
-        await self.redis.sadd(key, url)
+        try:
+            # Provide consistency: Add to Redis regardless of DB result
+            await self.redis.sadd(key, url)
+        except redis.exceptions.RedisError as e:
+             logger.warning(f"Redis error in mark_url_visited: {e}")
         
         return is_new
 
     async def is_entity_known(self, canonical_name: str) -> bool:
         key = "known_entities"
         
-        # 1. Check Redis
-        if await self.redis.sismember(key, canonical_name):
-            return True
+        try:
+            # 1. Check Redis
+            import redis.exceptions
+            if await self.redis.sismember(key, canonical_name):
+                return True
+        except redis.exceptions.RedisError as e:
+             logger.warning(f"Redis error in is_entity_known: {e}")
             
         # 2. Check DB
         if await self.db_manager.is_entity_known(canonical_name):
-            await self.redis.sadd(key, canonical_name)
+            try:
+                await self.redis.sadd(key, canonical_name)
+            except redis.exceptions.RedisError:
+                pass
             return True
             
         return False
@@ -201,7 +223,10 @@ class RedisStateManager(StateManager):
         # Write-Through
         is_new = await self.db_manager.mark_entity_known(canonical_name, attributes)
         
-        # Update Cache
-        await self.redis.sadd(key, canonical_name)
+        try:
+            # Update Cache
+            await self.redis.sadd(key, canonical_name)
+        except redis.exceptions.RedisError as e:
+             logger.warning(f"Redis error in mark_entity_known: {e}")
         
         return is_new

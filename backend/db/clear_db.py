@@ -17,7 +17,9 @@ async def clear_db():
     """
     Drops all tables and recreates them, effectively clearing all data.
     """
-    print(f"Clearing database at: {engine.url}")
+    # Redact password from the URL before logging
+    redacted_url = engine.url.render_as_string(hide_password=True)
+    print(f"Clearing database at: {redacted_url}")
     
     try:
         async with engine.begin() as conn:

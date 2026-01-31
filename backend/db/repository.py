@@ -105,8 +105,6 @@ class ResearchRepository:
 
         await self.session.commit()
 
-        await self.session.commit()
-
         # OPTIMIZATION: We no longer save all entities here.
         # Entities are now saved incrementally by the workers as they are discovered.
         # This prevents O(N) DB writes on every state save.
@@ -126,33 +124,36 @@ class ResearchRepository:
         Args:
             entity: The Entity domain model to save.
         """
-        from sqlalchemy.dialects.postgresql import insert
+        from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+        from sqlalchemy import insert
 
-        # Atomic UPSERT to handle race conditions
-        stmt = insert(EntityModel).values(
-            canonical_name=entity.canonical_name,
-            attributes=entity.attributes,
-            aliases=list(entity.aliases),
-            mention_count=entity.mention_count,
-            verification_status=entity.verification_status,
-            rejection_reason=entity.rejection_reason,
-            confidence_score=entity.confidence_score,
-        )
+        # Check dialect to decide on upsert strategy
+        bind = self.session.get_bind()
         
-        # Define update logic on conflict (canonical_name exists)
-        stmt = stmt.on_conflict_do_update(
-            index_elements=[EntityModel.canonical_name],
-            set_={
-                "attributes": stmt.excluded.attributes,
-                "aliases": stmt.excluded.aliases,
-                "mention_count": stmt.excluded.mention_count,
-                "verification_status": stmt.excluded.verification_status,
-                "rejection_reason": stmt.excluded.rejection_reason,
-                "confidence_score": stmt.excluded.confidence_score,
-            }
-        )
-        
-        await self.session.execute(stmt)
+        if bind.dialect.name == "postgresql":
+            # PostgreSQL-specific upsert
+            stmt = postgresql_insert(EntityModel).values(**entity_data)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["canonical_name"],
+                set_=entity_data
+            )
+            await self.session.execute(stmt)
+        else:
+             # Dialect-agnostic "upsert" simulation for SQLite
+             # We check existence and either update or insert
+             stmt_check = select(EntityModel).where(EntityModel.canonical_name == entity.canonical_name)
+             result_check = await self.session.execute(stmt_check)
+             existing_obj = result_check.scalar_one_or_none()
+             
+             if existing_obj:
+                 # Update existing
+                 for k, v in entity_data.items():
+                     if hasattr(existing_obj, k):
+                         setattr(existing_obj, k, v)
+             else:
+                 # Insert new
+                 new_obj = EntityModel(**entity_data)
+                 self.session.add(new_obj)
         
         # Handle evidence separately (append-only)
         # We need to fetch the entity (now guaranteed to exist) to manage relationships
