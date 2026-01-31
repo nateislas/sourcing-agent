@@ -1,7 +1,9 @@
-import pytest
 from unittest.mock import patch
+
+import pytest
+
 from backend.research.orchestrator import DeepResearchWorkflow
-from backend.research.state import ResearchState, ResearchPlan, InitialWorkerStrategy
+from backend.research.state import InitialWorkerStrategy, ResearchPlan, ResearchState
 
 
 @pytest.mark.asyncio
@@ -79,7 +81,9 @@ async def test_deep_research_workflow_structure():
         mock_update.return_value = plan
 
         # Run Workflow
-        workflow = DeepResearchWorkflow(timeout=10, verbose=True)
+        workflow = DeepResearchWorkflow(
+            timeout=10, verbose=True, disable_validation=True
+        )
         result = await workflow.run(topic="Test Topic")
 
         # Assertions

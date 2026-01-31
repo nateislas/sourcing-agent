@@ -4,17 +4,18 @@ Uses asyncio and DatabaseStateManager to mark an entity known and verify its att
 """
 
 import asyncio
-import sys
 import os
+import sys
 
 # Add project root to sys.path
 sys.path.append(os.getcwd())
 
-from backend.db.init_db import init_db
-from backend.research.state_manager import DatabaseStateManager
-from backend.db.connection import AsyncSessionLocal
-from backend.db.models import EntityModel
 from sqlalchemy import select
+
+from backend.db.connection import AsyncSessionLocal
+from backend.db.init_db import init_db
+from backend.db.models import EntityModel
+from backend.research.state_manager import DatabaseStateManager
 
 
 async def main():

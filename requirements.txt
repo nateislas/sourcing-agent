@@ -1,5 +1,6 @@
 aiosqlite==0.22.1
 asyncpg==0.31.0
+psycopg2-binary==2.9.10
 pydantic==2.12.5
 python-dotenv==1.2.1
 SQLAlchemy==2.0.46

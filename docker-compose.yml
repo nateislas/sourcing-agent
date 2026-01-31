@@ -1,4 +1,16 @@
 services:
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=research_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
   worker:
     build: .
     volumes:
@@ -10,6 +22,8 @@ services:
       - PYTHONUNBUFFERED=1
     command: python backend/worker.py
     restart: always
+    depends_on:
+      - db
 
   api:
     build: .
@@ -21,6 +35,8 @@ services:
       - .env
     command: uvicorn backend.api:app --host 0.0.0.0 --port 8000 --reload --reload-dir backend
     restart: always
+    depends_on:
+      - db
 
   frontend:
     image: node:22-alpine
