@@ -150,10 +150,10 @@ async def get_history():
                     if t_status == "running":
                         # Preserve specific internal states that are still 'running' in Temporal
                         if session_item["status"] not in ["verification_pending"]:
-                            session_item["status"] = t_status
+                            session_item["status"] = t_status  # type: ignore
                     else:
                         # Terminal statuses from Temporal always win
-                        session_item["status"] = t_status
+                        session_item["status"] = t_status  # type: ignore
             except Exception:
                 # If not found in temporal, keep DB status
                 pass
@@ -183,9 +183,9 @@ async def get_session_state(session_id: str):
         if t_status:
             if t_status == "running":
                 if state.status not in ["verification_pending"]:
-                    state.status = t_status
+                    state.status = t_status  # type: ignore
             else:
-                state.status = t_status
+                state.status = t_status  # type: ignore
     except Exception:
         # If not found in temporal, keep DB status
         pass

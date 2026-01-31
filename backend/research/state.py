@@ -31,6 +31,11 @@ def safe_getenv(key: str, default: Any = None) -> Any:
     return os.getenv(key, default)
 
 
+# --- Core Type Definitions ---
+
+VerificationStatus = Literal["VERIFIED", "UNVERIFIED", "UNCERTAIN", "REJECTED"]
+
+
 # --- Core Entity Definitions ---
 
 
@@ -59,9 +64,7 @@ class Entity(BaseModel):
     mention_count: int = 0
 
     # Verification Status
-    verification_status: Literal["VERIFIED", "UNVERIFIED", "UNCERTAIN", "REJECTED"] = (
-        "UNVERIFIED"
-    )
+    verification_status: VerificationStatus = "UNVERIFIED"
     rejection_reason: str | None = None
     confidence_score: float = 0.0
 

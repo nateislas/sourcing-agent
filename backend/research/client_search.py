@@ -246,7 +246,7 @@ class TavilySearchClient:
 
         results = []
         for response in responses:
-            if isinstance(response, Exception):
+            if isinstance(response, (Exception, BaseException)):
                 if self.logger:
                     self.logger.error("Tavily search failed: %s", response)
                 continue

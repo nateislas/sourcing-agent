@@ -269,11 +269,14 @@ class DeepResearchWorkflow(Workflow):
                 entity.aliases.add(alias)
                 
                 # Deduplicate evidence within the entity
-                existing_signatures = {(ev.source_url, ev.content) for ev in entity.evidence}
-                for ev in evidence:
-                    if (ev.source_url, ev.content) not in existing_signatures:
-                        entity.evidence.append(ev)
-                        existing_signatures.add((ev.source_url, ev.content))
+                from backend.research.state import EvidenceSnippet
+                existing_signatures = {(ev_item.source_url, ev_item.content) for ev_item in entity.evidence}
+                for ev_dict in evidence:
+                    # Convert dict to EvidenceSnippet
+                    snippet = EvidenceSnippet(**ev_dict)
+                    if (snippet.source_url, snippet.content) not in existing_signatures:
+                        entity.evidence.append(snippet)
+                        existing_signatures.add((snippet.source_url, snippet.content))
 
         state.iteration_count += 1
         global_novelty = total_new_entities / max(total_pages, 1)
@@ -390,10 +393,8 @@ class DeepResearchWorkflow(Workflow):
         # Send event for each entity
         for entity in state.known_entities.values():
             # Only verify unverified or uncertain entities? For now, verify all.
-            # Convert entity to dict for event payload
-            entity_dict = entity.model_dump()
             ctx.send_event(
-                VerifyEntityEvent(entity=entity_dict, constraints=constraints)
+                VerifyEntityEvent(entity=entity, constraints=constraints)
             )
 
         return None
@@ -450,8 +451,9 @@ class DeepResearchWorkflow(Workflow):
         # Trigger Deep Verification for Uncertains
         if uncertain_entities:
             logger.info("Triggering Deep Verification for %d uncertain entities.", len(uncertain_entities))
+            constraints = state.plan.query_analysis if state.plan else {}
             for ent in uncertain_entities:
-                ctx.send_event(DeepVerifyEntityEvent(entity=ent, constraints=state.constraints))
+                ctx.send_event(DeepVerifyEntityEvent(entity=ent, constraints=constraints))
             return None # Waiting for deep verify events processing
             
         # If no uncertains, proceed to deduplication
@@ -544,40 +546,23 @@ class DeepResearchWorkflow(Workflow):
         
         gap_events_dispatched = 0
         if uncertain_count > 0:
-             logger.info("Found %d uncertain entities after deduplication. Triggering gap analysis.", uncertain_count)
-             for ent in state.known_entities.values():
-                 if ent.verification_status == "UNCERTAIN":
-                     # We need strict typing for analyze_gaps input or mock result
-                     # analyze_gaps takes (entity_data, verification_result_dict)
-                     # We can reconstruct partial verification result from entity fields
-                     mock_res = {
-                         "status": "UNCERTAIN",
-                         "missing_fields": [], # We need to re-derive missing fields or store them? 
-                         # Verify result had missing_fields. Entity doesn't store them explicitly in schema?
-                         # Schema has `attributes`. We can infer missing?
-                         # Or we should have stored `missing_fields` in Entity extra fields?
-                         # For now, let's infer missing P0 fields for gap analysis.
-                     }
-                     # Actually analyze_gaps logic:
-                     # canonical_name = entity_data.get("canonical_name")
-                     # missing_fields = verification_result.get("missing_fields", [])
-                     # ... checks "owner" in missing_fields etc.
-                     
-                     # Better: Check empty attributes directly here or in activity?
-                     # Let's verify what `analyze_gaps` expects.
-                     # It expects `missing_fields` list.
-                     
-                     missing = []
-                     if not ent.attributes.get("owner"): missing.append("owner")
-                     if not ent.attributes.get("product_stage") and not ent.clinical_phase: missing.append("product_stage")
-                     if not ent.attributes.get("indication"): missing.append("indication")
-                     
-                     mock_res["missing_fields"] = missing
-                     
-                     queries = await activities.analyze_gaps(ent.model_dump(), mock_res)
-                     if queries:
-                         ctx.send_event(GapFillEvent(entity=ent.model_dump(), queries=queries))
-                         gap_events_dispatched += 1
+            logger.info("Found %d uncertain entities after deduplication. Triggering gap analysis.", uncertain_count)
+            for ent in state.known_entities.values():
+                if ent.verification_status == "UNCERTAIN":
+                    missing = []
+                    if not ent.attributes.get("owner"): missing.append("owner")
+                    if not ent.attributes.get("product_stage") and not ent.clinical_phase: missing.append("product_stage")
+                    if not ent.attributes.get("indication"): missing.append("indication")
+                    
+                    mock_res = {
+                        "status": "UNCERTAIN",
+                        "missing_fields": missing
+                    }
+                    
+                    queries = await activities.analyze_gaps(ent.model_dump(), mock_res)
+                    if queries:
+                        ctx.send_event(GapFillEvent(entity=ent, queries=queries))
+                        gap_events_dispatched += 1
 
         if gap_events_dispatched > 0:
             logger.info("Dispatching %d gap-filling tasks.", gap_events_dispatched)
@@ -592,7 +577,7 @@ class DeepResearchWorkflow(Workflow):
         Reuses the existing worker execution logic but with targeted queries.
         """
         # Create a temporary worker state for this specific task
-        worker_id = f"gap-fill-{ev.entity.get('canonical_name')}"[:30]
+        worker_id = f"gap-fill-{ev.entity.canonical_name}"[:30]
         # Clean ID
         worker_id = re.sub(r"[^a-zA-Z0-9-]", "", worker_id)
 

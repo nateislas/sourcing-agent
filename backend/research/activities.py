@@ -3,9 +3,12 @@ Temporal activities for the Deep Research Application.
 Handles external interactions like searching and fetching content.
 """
 
+import asyncio
 import logging
 import os
+import random
 import re
+from datetime import datetime
 from urllib.parse import urlparse
 
 from temporalio import activity
@@ -13,12 +16,12 @@ from temporalio import activity
 from backend.db.connection import AsyncSessionLocal
 from backend.db.repository import ResearchRepository
 from backend.research.agent import ResearchAgent
-from backend.research.client_search import PerplexitySearchClient
+from backend.research.client_search import PerplexitySearchClient, TavilySearchClient
 from backend.research.extraction import EntityExtractor
 from backend.research.extraction_crawl4ai import Crawl4AIExtractor
 from backend.research.link_filter import LinkFilter
 from backend.research.link_scorer import LinkScorer
-from backend.research.state import Entity, ResearchPlan, ResearchState, WorkerState
+from backend.research.state import Entity, EvidenceSnippet, ResearchPlan, ResearchState, WorkerState
 from backend.research.state_manager import DatabaseStateManager, RedisStateManager
 from backend.research.verification import VerificationAgent
 from backend.research.pricing import calculate_search_cost
@@ -52,8 +55,6 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
     Executes a single iteration for a specific worker.
     Includes: Search -> Fetch -> Extract -> Queue Management.
     """
-    import asyncio
-    from datetime import datetime
     safe_get_logger().info(
         "Worker %s executing iteration with strategy %s",
         worker_state.id,
@@ -70,7 +71,7 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
         # Metrics for this iteration
         pages_fetched = 0
         new_entities_found = []  # Holds ALL extracted entities (evidence)
-        discovered_links = []
+        discovered_links: list[str] = []
         globally_new_count = 0  # Metric: truly new entities
         iteration_cost = 0.0
 
@@ -91,10 +92,6 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
             all_queries = [worker_state.strategy]
 
         # Random engine selection (50/50 Perplexity vs Tavily)
-        import random
-
-        from backend.research.client_search import TavilySearchClient
-
         search_engine = random.choice(["perplexity", "tavily"])
         
         # Determine max_results based on engine
@@ -235,7 +232,7 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
 
         # 3. Fetch & Extract Phase
         # Filter and prepare URLs for batch processing
-        valid_urls = []
+        valid_urls: list[str] = []
         for current_url in url_queue:
             if pages_fetched + len(valid_urls) >= page_budget:
                 break
@@ -272,11 +269,11 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
 
                 # Process individual results from the batch
                 for extraction_res in batch_results:
-                    current_url = extraction_res.get("url")
+                    extraction_url: str = extraction_res.get("url", "")
                     
                     # --- Success Path: Mark Visited ---
-                    await state_manager.mark_url_visited(current_url, research_id=worker_state.research_id)
-                    domain = urlparse(current_url).netloc
+                    await state_manager.mark_url_visited(extraction_url, research_id=worker_state.research_id)
+                    domain = urlparse(extraction_url).netloc
                     worker_state.explored_domains.add(domain)
 
                     # Handle PDF Fallback (Sequential for now, but rare)
@@ -560,20 +557,16 @@ async def save_state(state: ResearchState) -> bool:
 
 
 @activity.defn
-async def verify_entity(entity_data: dict, constraints: dict) -> dict:
+async def verify_entity(entity: Entity, constraints: dict) -> dict:
     """
     Verifies a single entity against constraints using the VerificationAgent.
     Args:
-        entity_data: Dict representation of the Entity object.
+        entity: The Entity object.
         constraints: Dictionary of hard constraints from the plan.
     Returns:
         Dict representation of VerificationResult.
     """
-    safe_get_logger().info("Verifying entity: %s", entity_data.get("canonical_name"))
-
-    # Reconstruct Entity object from dict
-    # We use Entity.model_validate or similar if Pydantic v2, or just constructor
-    entity = Entity(**entity_data)
+    safe_get_logger().info("Verifying entity: %s", entity.canonical_name)
 
     agent = VerificationAgent()
     result, cost = await agent.verify_entity(entity, constraints)
@@ -584,8 +577,9 @@ async def verify_entity(entity_data: dict, constraints: dict) -> dict:
     # OPTIMIZATION: Persist the verification result immediately to Relational DB
     # because save_state no longer iterates all entities.
     try:
+        from backend.research.state import VerificationStatus
         if result.status != "UNVERIFIED":
-            entity.verification_status = result.status
+            entity.verification_status = result.status  # type: ignore
             entity.rejection_reason = result.rejection_reason
             entity.confidence_score = result.confidence
             

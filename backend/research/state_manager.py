@@ -4,8 +4,11 @@ Handles deduplication of URLs and entities across distributed workers.
 """
 
 import logging
+import os
 from abc import ABC, abstractmethod
 
+import redis.asyncio as aioredis
+import redis.exceptions
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
@@ -68,7 +71,7 @@ class DatabaseStateManager(StateManager):
                 result = await session.execute(stmt)
                 await session.commit()
                 # rowcount is 1 if inserted, 0 if conflict
-                return result.rowcount > 0
+                return getattr(result, "rowcount", 0) > 0
             except Exception as e:
                 await session.rollback()
                 logger.exception("Error marking URL %s as visited: %s", url, e)
@@ -145,12 +148,9 @@ class RedisStateManager(StateManager):
     """
 
     def __init__(self):
-        import os
-        import redis.asyncio as redis
-        
         self.redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
         # decode_responses=True ensures we get str back, not bytes
-        self.redis = redis.from_url(self.redis_url, decode_responses=True)
+        self.redis = aioredis.from_url(self.redis_url, decode_responses=True)
         self.db_manager = DatabaseStateManager()
 
     async def is_url_visited(self, url: str, research_id: str | None = None) -> bool:
@@ -158,7 +158,6 @@ class RedisStateManager(StateManager):
         
         try:
             # 1. Check Redis
-            import redis.exceptions
             if await self.redis.sismember(key, url):
                 return True
         except redis.exceptions.RedisError as e:
@@ -195,7 +194,6 @@ class RedisStateManager(StateManager):
         
         try:
             # 1. Check Redis
-            import redis.exceptions
             if await self.redis.sismember(key, canonical_name):
                 return True
         except redis.exceptions.RedisError as e:

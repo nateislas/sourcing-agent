@@ -6,7 +6,7 @@ Defines the communication messages between workflow steps.
 from llama_index.core.workflow import Event
 from pydantic import Field
 
-from backend.research.state import ResearchPlan, WorkerState
+from backend.research.state import Entity, ResearchPlan, WorkerState
 
 
 class PlanCreatedEvent(Event):
@@ -62,7 +62,7 @@ class VerificationStartEvent(Event):
 class VerifyEntityEvent(Event):
     """Event triggered to verify a specific entity."""
 
-    entity: dict
+    entity: Entity
     constraints: dict
 
 
@@ -76,7 +76,7 @@ class VerificationResultEvent(Event):
 class GapFillEvent(Event):
     """Event triggered to execute gap-filling searches for an entity."""
 
-    entity: dict
+    entity: Entity
     queries: list[str]
 
 
@@ -95,7 +95,7 @@ class GapFilledEvent(Event):
 
 class DeepVerifyEntityEvent(Event):
     """Event triggered to Deep Read Verify a specific entity."""
-    entity: dict
+    entity: Entity
     constraints: dict
 
 

@@ -37,7 +37,7 @@ class LLMHandler:
         wait=wait_exponential(multiplier=1, min=4, max=20),
         stop=stop_after_attempt(5),
         before_sleep=lambda retry_state: logger.warning(
-            f"LLM Error during acomplete: {retry_state.outcome.exception()}. Retrying in {retry_state.next_action.sleep}s... (Attempt {retry_state.attempt_number})"
+            f"LLM Error during acomplete: {retry_state.outcome.exception() if retry_state.outcome else 'Unknown'}. Retrying in {retry_state.next_action.sleep if retry_state.next_action else 0}s... (Attempt {retry_state.attempt_number})"  # type: ignore
         ),
     )
     async def acomplete(self, *args, **kwargs):
@@ -55,7 +55,7 @@ class LLMHandler:
         wait=wait_exponential(multiplier=1, min=4, max=20),
         stop=stop_after_attempt(5),
         before_sleep=lambda retry_state: logger.warning(
-            f"LLM Error during achat: {retry_state.outcome.exception()}. Retrying in {retry_state.next_action.sleep}s... (Attempt {retry_state.attempt_number})"
+            f"LLM Error during achat: {retry_state.outcome.exception() if retry_state.outcome else 'Unknown'}. Retrying in {retry_state.next_action.sleep if retry_state.next_action else 0}s... (Attempt {retry_state.attempt_number})"  # type: ignore
         ),
     )
     async def achat(self, *args, **kwargs):
@@ -102,7 +102,7 @@ def get_llm(model_name: str | None = None, thinking_budget: int | None = None, t
         if "gemini-3" in model_name or "thinking" in model_name:
             pass_thinking_config = True
 
-    kwargs = {}
+    kwargs: dict[str, Any] = {}
     if pass_thinking_config:
         # Note: LlamaIndex GoogleGenAI passes extra kwargs to the GenerativeModel
         # Gemini Thinking mode uses thinking_config
@@ -115,7 +115,7 @@ def get_llm(model_name: str | None = None, thinking_budget: int | None = None, t
     if temperature is not None:
         kwargs["temperature"] = temperature
 
-    llm = GoogleGenAI(model=model_name, api_key=api_key, **kwargs)
+    llm = GoogleGenAI(model=model_name, api_key=api_key, **kwargs)  # type: ignore
     return LLMHandler(llm, thinking_budget=thinking_budget)
 
 

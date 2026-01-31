@@ -3,6 +3,7 @@ Extraction logic for the Deep Research Application.
 Handles web content cleaning, link discovery, and structured entity extraction.
 """
 
+import hashlib
 import io
 import os
 from datetime import datetime
@@ -179,7 +180,6 @@ class LlamaExtractionClient:
         safe_research_id = self.research_id
         if len(safe_research_id) > 40:
              # If too long, take first 20 chars + hash of the rest
-             import hashlib
              suffix = hashlib.md5(safe_research_id.encode()).hexdigest()[:8]
              safe_research_id = f"{safe_research_id[:30]}-{suffix}"
              

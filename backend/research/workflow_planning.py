@@ -2,8 +2,12 @@
 LlamaIndex Workflow for Initial Research Planning.
 """
 
+import asyncio
 import json
+import logging
 import os
+import re
+from typing import Any
 
 from llama_index.core.workflow import (
     StartEvent,
@@ -38,7 +42,6 @@ class InitialPlanningWorkflow(Workflow):
         if model_name is None:
             model_name = os.getenv("PLANNING_MODEL")
             if not model_name:
-                import logging
                 logging.getLogger(__name__).warning("PLANNING_MODEL not set in .env. Falling back to gemini-2.0-flash.")
                 model_name = "gemini-2.0-flash"
         

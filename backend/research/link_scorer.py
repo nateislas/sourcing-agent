@@ -2,8 +2,11 @@
 LLM-based link relevance scoring for intelligent queue prioritization.
 """
 
+import asyncio
 import json
+import logging
 import os
+import re
 from typing import Any
 
 from google.api_core.exceptions import ResourceExhausted
@@ -48,7 +51,6 @@ class LinkScorer:
         self.logger = get_session_logger(research_id) if research_id else None
         self.model = os.getenv("LINK_SCORING_MODEL")
         if not self.model:
-            import logging
             logging.getLogger(__name__).warning("LINK_SCORING_MODEL not set in .env. Falling back to gemini-2.0-flash.")
             self.model = "gemini-2.0-flash"
 
@@ -78,8 +80,7 @@ class LinkScorer:
 
         # 2. Process in chunks to avoid prompt too large but maximize batching
         chunk_size = int(os.getenv("LINK_SCORING_BATCH_SIZE", "20"))
-        all_scored_links = []
-        import asyncio
+        all_scored_links: list[dict[str, Any]] = []
         
         # We can still use a semaphore for the batch calls if many workers are hitting this
         sem = asyncio.Semaphore(3)
@@ -192,13 +193,21 @@ class LinkScorer:
         
         try:
             data = json.loads(text)
-            return data if isinstance(data, list) else []
+            if isinstance(data, list):
+                return data
+            # If it's a single dict, wrap it in a list
+            if isinstance(data, dict):
+                return [data]
+            return []
         except json.JSONDecodeError:
-            import re
             match = re.search(r"\[.*\]", text, re.DOTALL)
             if match:
                 try:
-                    return json.loads(match.group(0))
+                    data = json.loads(match.group(0))
+                    if isinstance(data, list):
+                        return data
+                    if isinstance(data, dict):
+                        return [data]
                 except json.JSONDecodeError as e:
                     if self.logger:
                         self.logger.error(f"Failed to parse JSON from regex match: {e}. Text: {match.group(0)[:100]}...")

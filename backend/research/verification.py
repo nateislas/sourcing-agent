@@ -3,20 +3,22 @@ Verification Logic for the Deep Research Application.
 Handles strict constraint checking, gap analysis, and final asset classification.
 """
 
+import json
 import os
+import re
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from backend.research.llm import LLMClient
-from backend.research.state import Entity
+from backend.research.state import Entity, VerificationStatus
 
 
 class VerificationResult(BaseModel):
     """Result of the verification process for a single entity."""
 
     canonical_name: str
-    status: str = Field(description="VERIFIED, UNCERTAIN, or REJECTED")
+    status: VerificationStatus = Field(description="VERIFIED, UNCERTAIN, or REJECTED")
     rejection_reason: str | None = Field(
         description="Reason for rejection, if applicable"
     )
@@ -31,7 +33,6 @@ class VerificationAgent:
     """
     Agent responsible for verifying entities against hard constraints and identifying gaps.
     """
-
     def __init__(self, model_name: str | None = None):
         if model_name is None:
             model_name = os.getenv("VERIFICATION_MODEL", "gemini-2.5-flash-lite")
@@ -245,8 +246,6 @@ class VerificationAgent:
             response_text, _ = await self.llm.generate(prompt)
             # Parse response_text logic here (assuming LLMClient handles JSON parsing or we do it manually)
             # For robustness, we'll try to parse the JSON
-            import json
-            import re
             
             # Clean markdown code blocks
             text = response_text.strip()
@@ -296,7 +295,7 @@ class VerificationAgent:
                     if not primary_ent.clinical_phase and other_ent.clinical_phase:
                         primary_ent.clinical_phase = other_ent.clinical_phase
                     if not primary_ent.attributes.get("owner") and other_ent.attributes.get("owner"):
-                         primary_ent.attributes["owner"] = other_ent.attributes.get("owner")
+                        primary_ent.attributes["owner"] = other_ent.attributes.get("owner") or "Unknown"
 
                 merged_entities.append(primary_ent)
             
