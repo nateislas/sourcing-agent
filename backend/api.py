@@ -26,7 +26,7 @@ TEMPORAL_STATUS_MAP = {
     WorkflowExecutionStatus.RUNNING: "running",
     WorkflowExecutionStatus.COMPLETED: "completed",
     WorkflowExecutionStatus.FAILED: "failed",
-    WorkflowExecutionStatus.CANCELLED: "cancelled",
+    WorkflowExecutionStatus.CANCELED: "cancelled",
     WorkflowExecutionStatus.TERMINATED: "killed",
     WorkflowExecutionStatus.TIMED_OUT: "timed_out",
     WorkflowExecutionStatus.CONTINUED_AS_NEW: "running",
