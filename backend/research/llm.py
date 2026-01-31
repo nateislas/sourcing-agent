@@ -24,8 +24,9 @@ logger = logging.getLogger(__name__)
 
 class LLMHandler:
     """Wrapper for GoogleGenAI to add retries on rate limits and server overloads."""
-    def __init__(self, llm: GoogleGenAI):
+    def __init__(self, llm: GoogleGenAI, thinking_budget: int | None = None):
         self.llm = llm
+        self.thinking_budget = thinking_budget
 
     @property
     def model(self):
@@ -40,6 +41,13 @@ class LLMHandler:
         ),
     )
     async def acomplete(self, *args, **kwargs):
+        if self.thinking_budget and "gemini-3" in self.model:
+            # Inject thinking_config into the request parameters
+            # LlamaIndex passes extra kwargs to the underlying generate_content call
+            kwargs.setdefault("thinking_config", {
+                "include_thoughts": True,
+                "token_limit": self.thinking_budget
+            })
         return await self.llm.acomplete(*args, **kwargs)
 
     @retry(
@@ -51,6 +59,12 @@ class LLMHandler:
         ),
     )
     async def achat(self, *args, **kwargs):
+        if self.thinking_budget and "gemini-3" in self.model:
+             # Inject thinking_config into the request parameters
+            kwargs.setdefault("thinking_config", {
+                "include_thoughts": True,
+                "token_limit": self.thinking_budget
+            })
         return await self.llm.achat(*args, **kwargs)
 
     def __getattr__(self, name):
@@ -58,7 +72,7 @@ class LLMHandler:
         return getattr(self.llm, name)
 
 
-def get_llm(model_name: str | None = None):
+def get_llm(model_name: str | None = None, thinking_budget: int | None = None):
     """
     Returns a configured LLMHandler instance (wrapped GoogleGenAI).
     The API key is retrieved from GEMINI_API_KEY or GOOGLE_API_KEY environment variables.
@@ -75,17 +89,25 @@ def get_llm(model_name: str | None = None):
             "GEMINI_API_KEY or GOOGLE_API_KEY is not set in the environment"
         )
 
-    # Standardize model name: ensure it starts with models/ if it doesn't already,
-    # but don't double prefix if it already has it.
+    # Standardize model name
     if model_name:
         if not (model_name.startswith("models/") or model_name.startswith("tunedModels/")):
             model_name = f"models/{model_name}"
     else:
-        # Fallback if both model_name and env are missing
         model_name = "models/gemini-2.0-flash"
 
-    llm = GoogleGenAI(model=model_name, api_key=api_key)
-    return LLMHandler(llm)
+    # Configure thinking mode for models that support it (like gemini-3)
+    kwargs = {}
+    if thinking_budget and "gemini-3" in model_name:
+        # Note: LlamaIndex GoogleGenAI passes extra kwargs to the GenerativeModel
+        # Gemini Thinking mode uses thinking_config
+        kwargs["thinking_config"] = {
+            "include_thoughts": True,
+            "token_limit": thinking_budget
+        }
+
+    llm = GoogleGenAI(model=model_name, api_key=api_key, **kwargs)
+    return LLMHandler(llm, thinking_budget=thinking_budget)
 
 
 class LLMClient:
@@ -94,13 +116,13 @@ class LLMClient:
     Supports structured output generation.
     """
 
-    def __init__(self, model_name: str | None = None):
+    def __init__(self, model_name: str | None = None, thinking_budget: int | None = None):
         if model_name is None:
             model_name = os.getenv("DEFAULT_LLM_MODEL")
             if not model_name:
                 logger.warning("DEFAULT_LLM_MODEL not set in .env. Falling back to gemini-2.0-flash.")
                 model_name = "gemini-2.0-flash"
-        self.llm = get_llm(model_name)
+        self.llm = get_llm(model_name, thinking_budget=thinking_budget)
 
     async def generate(
         self, prompt: str, response_model: Any = None

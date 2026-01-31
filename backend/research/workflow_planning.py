@@ -41,7 +41,9 @@ class InitialPlanningWorkflow(Workflow):
                 import logging
                 logging.getLogger(__name__).warning("PLANNING_MODEL not set in .env. Falling back to gemini-2.0-flash.")
                 model_name = "gemini-2.0-flash"
-        self.llm = get_llm(model_name)
+        
+        thinking_budget = int(os.getenv("PLANNING_THINKING_BUDGET", "0")) or None
+        self.llm = get_llm(model_name, thinking_budget=thinking_budget)
         self.research_id = research_id
         self.logger = get_session_logger(research_id) if research_id else None
 

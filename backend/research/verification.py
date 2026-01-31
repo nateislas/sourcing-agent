@@ -35,7 +35,8 @@ class VerificationAgent:
     def __init__(self, model_name: str | None = None):
         if model_name is None:
             model_name = os.getenv("VERIFICATION_MODEL", "gemini-2.5-flash-lite")
-        self.llm = LLMClient(model_name=model_name)
+        thinking_budget = int(os.getenv("VERIFICATION_THINKING_BUDGET", "0")) or None
+        self.llm = LLMClient(model_name=model_name, thinking_budget=thinking_budget)
 
     async def verify_entity(
         self, entity: Entity, constraints: dict[str, Any]

@@ -43,6 +43,10 @@ class ResearchAgent:
             
         env_timeout = os.getenv("RESEARCH_TIMEOUT")
         self.timeout = timeout or (int(env_timeout) if env_timeout else 60)
+        
+        # Load thinking budgets
+        self.planning_thinking_budget = int(os.getenv("PLANNING_THINKING_BUDGET", "0")) or None
+        self.research_thinking_budget = int(os.getenv("RESEARCH_THINKING_BUDGET", "0")) or None
 
     async def generate_initial_plan(
         self, topic: str, research_id: str | None = None
@@ -144,7 +148,8 @@ class ResearchAgent:
 
         # Call LLM
         model_name = self.model_name
-        llm = get_llm(model_name=model_name)
+        # Use planning budget for adaptive planning
+        llm = get_llm(model_name=model_name, thinking_budget=self.planning_thinking_budget)
         messages = [ChatMessage(role="user", content=prompt)]
 
         try:
