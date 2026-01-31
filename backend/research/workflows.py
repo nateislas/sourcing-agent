@@ -5,12 +5,13 @@ Implements the iterative plan-guided discovery framework.
 
 import asyncio
 from datetime import timedelta
+
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
     from backend import config
     from backend.research import activities
-    from backend.research.state import ResearchState, WorkerState, Entity
+    from backend.research.state import Entity, ResearchState, WorkerState
 
 
 @workflow.defn
@@ -20,14 +21,18 @@ class DeepResearchOrchestrator:
     """
 
     @workflow.run
-    async def run(self, topic: str, session_id: str = None) -> dict:
+    async def run(self, topic: str, session_id: str | None = None) -> dict:
         """
         Executes the main research loop for a given topic.
         """
         workflow.logger.info("Starting research on: %s", topic)
 
         # 1. Initialize State
-        state = ResearchState(id=session_id, topic=topic, status="running") if session_id else ResearchState(topic=topic, status="running")
+        state = (
+            ResearchState(id=session_id, topic=topic, status="running")
+            if session_id
+            else ResearchState(topic=topic, status="running")
+        )
         state.logs.append("Workflow initialized.")
         await workflow.execute_activity(
             activities.save_state, state, start_to_close_timeout=timedelta(seconds=5)
@@ -43,14 +48,14 @@ class DeepResearchOrchestrator:
 
         # Initialize workers from plan
         for worker_cfg in state.plan.initial_workers:
-            w_state = WorkerState(
+            init_w_state = WorkerState(
                 id=worker_cfg.worker_id,
                 research_id=state.id,
                 strategy=worker_cfg.strategy,
-                queries=worker_cfg.example_queries,
+                queries=worker_cfg.example_queries,  # type: ignore
                 status="ACTIVE",
             )
-            state.workers[w_state.id] = w_state
+            state.workers[init_w_state.id] = init_w_state
 
         await workflow.execute_activity(
             activities.save_state, state, start_to_close_timeout=timedelta(seconds=5)
@@ -93,7 +98,7 @@ class DeepResearchOrchestrator:
 
             for res in results:
                 w_id = res.get("worker_id")
-                w_state = state.workers.get(w_id)
+                w_state: WorkerState | None = state.workers.get(w_id)
                 if not w_state:
                     continue
 
@@ -150,16 +155,14 @@ class DeepResearchOrchestrator:
                             entity.drug_class = item.get("drug_class")
                         if not entity.clinical_phase:
                             entity.clinical_phase = item.get("clinical_phase")
-                        
+
                         # Add new aliases and evidence to existing entity
                         entity.aliases.add(item["alias"])
                         entity.evidence.extend(item["evidence"])
 
             state.iteration_count += 1
             global_novelty = total_new_entities / max(total_pages, 1)
-            log_msg = (
-                "Iteration %s completed. Found %d new entities. Novelty Rate: %.2f entities/page"
-            )
+            log_msg = "Iteration %s completed. Found %d new entities. Novelty Rate: %.2f entities/page"
             state.logs.append(
                 log_msg % (state.iteration_count, total_new_entities, global_novelty)
             )
@@ -188,7 +191,7 @@ class DeepResearchOrchestrator:
             for worker_id in state.plan.workers_to_kill:
                 if worker_id in state.workers:
                     state.workers[worker_id].status = "DEAD_END"
-                    state.logs.append("Killed worker %s (exhausted)" % worker_id)
+                    state.logs.append(f"Killed worker {worker_id} (exhausted)")
 
             # Handle worker spawns
             for worker_cfg in state.plan.initial_workers:
@@ -197,16 +200,16 @@ class DeepResearchOrchestrator:
                         id=worker_cfg.worker_id,
                         research_id=state.id,
                         strategy=worker_cfg.strategy,
-                        queries=worker_cfg.example_queries,
+                        queries=worker_cfg.example_queries,  # type: ignore
                         status="ACTIVE",
                     )
                     state.workers[w_state.id] = w_state
-                    state.logs.append("Spawned new worker %s" % w_state.id)
+                    state.logs.append(f"Spawned new worker {w_state.id}")
 
             # Update queries for existing workers
             for worker_id, new_queries in state.plan.updated_queries.items():
                 if worker_id in state.workers:
-                    state.workers[worker_id].queries = new_queries
+                    state.workers[worker_id].queries = new_queries  # type: ignore
 
             # Save state after iteration
             await workflow.execute_activity(
@@ -217,7 +220,9 @@ class DeepResearchOrchestrator:
 
         # 4. Verification Phase
         state.status = "verification_pending"
-        state.logs.append(f"Starting verification phase for {len(state.known_entities)} entities.")
+        state.logs.append(
+            f"Starting verification phase for {len(state.known_entities)} entities."
+        )
         await workflow.execute_activity(
             activities.save_state, state, start_to_close_timeout=timedelta(seconds=5)
         )
@@ -235,7 +240,7 @@ class DeepResearchOrchestrator:
 
         if verification_tasks:
             verification_results = await asyncio.gather(*verification_tasks)
-            
+
             # Update state with verification results
             uncertain_entities = []
             for res in verification_results:
@@ -245,22 +250,27 @@ class DeepResearchOrchestrator:
                     ent.verification_status = res.get("status", "UNCERTAIN")
                     ent.rejection_reason = res.get("rejection_reason")
                     ent.confidence_score = res.get("confidence", 0.0)
-                    
+
                     if ent.verification_status == "UNCERTAIN":
                         uncertain_entities.append(ent)
 
             # 5. Gap Filling Phase (Optional)
             if uncertain_entities:
-                state.logs.append(f"Found {len(uncertain_entities)} uncertain entities. Starting gap analysis.")
+                state.logs.append(
+                    f"Found {len(uncertain_entities)} uncertain entities. Starting gap analysis."
+                )
                 gap_filling_tasks = []
                 for ent in uncertain_entities:
                     # Analyze gaps to get queries
                     queries = await workflow.execute_activity(
                         activities.analyze_gaps,
-                        args=[ent.model_dump(), {"status": "UNCERTAIN", "missing_fields": []}],
-                        start_to_close_timeout=timedelta(seconds=30)
+                        args=[
+                            ent.model_dump(),
+                            {"status": "UNCERTAIN", "missing_fields": []},
+                        ],
+                        start_to_close_timeout=timedelta(seconds=30),
                     )
-                    
+
                     if queries:
                         # Create a targeted worker iteration for gap filling
                         gap_worker = WorkerState(
@@ -268,16 +278,16 @@ class DeepResearchOrchestrator:
                             research_id=state.id,
                             strategy="gap_filling",
                             queries=queries,
-                            status="ACTIVE"
+                            status="ACTIVE",
                         )
                         gap_filling_tasks.append(
                             workflow.execute_activity(
                                 activities.execute_worker_iteration,
                                 gap_worker,
-                                start_to_close_timeout=timedelta(minutes=5)
+                                start_to_close_timeout=timedelta(minutes=5),
                             )
                         )
-                
+
                 if gap_filling_tasks:
                     await asyncio.gather(*gap_filling_tasks)
                     state.logs.append("Gap filling phase complete.")

@@ -4,38 +4,54 @@ Handles strict constraint checking, gap analysis, and final asset classification
 """
 
 import os
-from typing import List, Dict, Any, Optional
+from typing import Any
+
 from pydantic import BaseModel, Field
-from backend.research.state import Entity
+
 from backend.research.llm import LLMClient
+from backend.research.state import Entity
+
 
 class VerificationResult(BaseModel):
     """Result of the verification process for a single entity."""
+
     canonical_name: str
     status: str = Field(description="VERIFIED, UNCERTAIN, or REJECTED")
-    rejection_reason: Optional[str] = Field(description="Reason for rejection, if applicable")
-    missing_fields: List[str] = Field(description="Critical metadata fields that are missing")
+    rejection_reason: str | None = Field(
+        description="Reason for rejection, if applicable"
+    )
+    missing_fields: list[str] = Field(
+        description="Critical metadata fields that are missing"
+    )
     confidence: float = Field(description="Confidence score 0-100")
     explanation: str = Field(description="Reasoning for the decision")
+
 
 class VerificationAgent:
     """
     Agent responsible for verifying entities against hard constraints and identifying gaps.
     """
-    def __init__(self, model_name: str = None):
+
+    def __init__(self, model_name: str | None = None):
         if model_name is None:
             model_name = os.getenv("VERIFICATION_MODEL", "gemini-2.5-flash-lite")
         self.llm = LLMClient(model_name=model_name)
 
-    async def verify_entity(self, entity: Entity, constraints: Dict[str, Any]) -> VerificationResult:
+    async def verify_entity(
+        self, entity: Entity, constraints: dict[str, Any]
+    ) -> tuple[VerificationResult, float]:
         """
         Verifies a single entity against the provided constraints.
         """
         prompt = self._build_verification_prompt(entity, constraints)
-        response = await self.llm.generate(prompt, response_model=VerificationResult)
-        return response
+        result, cost = await self.llm.generate(
+            prompt, response_model=VerificationResult
+        )
+        return result, cost  # type: ignore
 
-    def _build_verification_prompt(self, entity: Entity, constraints: Dict[str, Any]) -> str:
+    def _build_verification_prompt(
+        self, entity: Entity, constraints: dict[str, Any]
+    ) -> str:
         """
         Builds the prompt for the verification agent with improved constraint clarity.
         """
@@ -46,11 +62,13 @@ class VerificationAgent:
         modality = constraints.get("modality", "Not specified")
         stage = constraints.get("stage", "Not specified")
         geography = constraints.get("geography", "Not specified")
-        
+
         # Prepare evidence text with sources
         evidence_text = ""
         for i, snippet in enumerate(entity.evidence, 1):
-             evidence_text += f"Source {i} ({snippet.source_url}):\n\"{snippet.content}\"\n\n"
+            evidence_text += (
+                f'Source {i} ({snippet.source_url}):\n"{snippet.content}"\n\n'
+            )
 
         if not evidence_text:
             evidence_text = "No evidence provided."
@@ -60,9 +78,9 @@ class VerificationAgent:
     
     ### 1. Asset Profile
     Asset Name: {entity.canonical_name}
-    Aliases: {', '.join(entity.aliases)}
-    Drug Class: {entity.drug_class or 'Unknown'}
-    Clinical Phase: {entity.clinical_phase or 'Unknown'}
+    Aliases: {", ".join(entity.aliases)}
+    Drug Class: {entity.drug_class or "Unknown"}
+    Clinical Phase: {entity.clinical_phase or "Unknown"}
     Mention Count: {entity.mention_count}
     Current Attributes: {entity.attributes}
     
@@ -73,10 +91,10 @@ class VerificationAgent:
     Geography: {geography}
     
     Must-Have (Hard) Constraints:
-    {', '.join(hard_constraints) if hard_constraints else "None explicitly listed, but match the Target/Modality above."}
+    {", ".join(hard_constraints) if hard_constraints else "None explicitly listed, but match the Target/Modality above."}
     
     Nice-to-Have (Soft) Constraints:
-    {', '.join(soft_constraints) if soft_constraints else "None"}
+    {", ".join(soft_constraints) if soft_constraints else "None"}
 
     ### 3. Evidence Snippets
     {evidence_text}

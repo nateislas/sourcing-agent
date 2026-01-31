@@ -13,6 +13,9 @@ const statusConfig = {
     verification_pending: { icon: Activity, color: 'text-purple-500', bg: 'bg-purple-500/10', label: 'Verifying' },
     completed: { icon: CheckCircle, color: 'text-green-500', bg: 'bg-green-500/10', label: 'Completed' },
     failed: { icon: AlertCircle, color: 'text-red-500', bg: 'bg-red-500/10', label: 'Failed' },
+    killed: { icon: AlertCircle, color: 'text-orange-500', bg: 'bg-orange-500/10', label: 'Killed' },
+    cancelled: { icon: AlertCircle, color: 'text-gray-500', bg: 'bg-gray-500/10', label: 'Cancelled' },
+    timed_out: { icon: Clock, color: 'text-amber-700', bg: 'bg-amber-700/10', label: 'Timed Out' },
 };
 
 export const StatusBanner: React.FC<Props> = ({ status, topic }) => {

@@ -41,7 +41,7 @@ export const Dashboard: React.FC = () => {
 
     // Polling
     useEffect(() => {
-        if (!state || ['completed', 'failed'].includes(state.status)) return;
+        if (!state || ['completed', 'failed', 'killed', 'cancelled', 'timed_out'].includes(state.status)) return;
 
         const interval = setInterval(fetchData, 3000); // Poll every 3s
         return () => clearInterval(interval);
@@ -79,8 +79,13 @@ export const Dashboard: React.FC = () => {
                                 Research Session / {state.id}
                             </span>
                         </div>
-                        <div className="text-[10px] font-mono text-muted-foreground bg-muted/30 px-3 py-1 rounded-full border">
-                            ITERATION {state.iteration_count}
+                        <div className="flex gap-2">
+                            <div className="text-[10px] font-mono text-muted-foreground bg-muted/30 px-3 py-1 rounded-full border">
+                                ITERATION {state.iteration_count}
+                            </div>
+                            <div className="text-[10px] font-mono text-muted-foreground bg-emerald-500/10 text-emerald-600 px-3 py-1 rounded-full border border-emerald-500/20">
+                                COST: ${state.total_cost?.toFixed(4) || "0.0000"}
+                            </div>
                         </div>
                     </div>
 

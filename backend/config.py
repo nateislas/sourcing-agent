@@ -5,6 +5,7 @@ Loads environment variables and defines constants for Temporal and task queues.
 
 import os
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 # Resolve project root (one level up from backend/)

@@ -3,9 +3,9 @@ Events for the Deep Research Orchestrator workflow.
 Defines the communication messages between workflow steps.
 """
 
-from typing import List
-from pydantic import Field
 from llama_index.core.workflow import Event
+from pydantic import Field
+
 from backend.research.state import ResearchPlan, WorkerState
 
 
@@ -33,12 +33,13 @@ class WorkerResultEvent(Event):
     new_entities: int  # Novel entities not previously known
     novelty_rate: float  # new_entities / total_pages_this_iteration
     status: str  # Classification: PRODUCTIVE, DECLINING, EXHAUSTED, DEAD_END
-    extracted_data: List[dict] = Field(
+    extracted_data: list[dict] = Field(
         default_factory=list
     )  # List of found entities/aliases
-    discovered_links: List[str] = Field(
+    discovered_links: list[str] = Field(
         default_factory=list
     )  # URLs found for further exploration
+    cost: float = 0.0
 
 
 class IterationCompleteEvent(Event):
@@ -67,21 +68,24 @@ class VerificationResultEvent(Event):
     """Event carrying the verification result for a single entity."""
 
     result: dict
+    cost: float = 0.0
 
 
 class GapFillEvent(Event):
     """Event triggered to execute gap-filling searches for an entity."""
-    
+
     entity: dict
-    queries: List[str]
+    queries: list[str]
 
 
 class GapFillingStartEvent(Event):
     """Signals the start of the gap filling phase with the expected count."""
+
     count: int
 
 
 class GapFilledEvent(Event):
     """Signals completion of a single gap filling task."""
-    worker_id: str
 
+    worker_id: str
+    cost: float = 0.0

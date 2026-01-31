@@ -279,4 +279,3 @@ Output as JSON:
 - **Evidence-based kills:** Only kill workers with persistent low novelty AND empty queues
 - **Avoid repetition:** Check query_history before generating new queries
 """
-

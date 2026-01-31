@@ -5,10 +5,11 @@ Define the database schema for persisting research state.
 
 # pylint: disable=unsubscriptable-object,too-few-public-methods
 
-from typing import List
 from datetime import datetime
-from sqlalchemy import String, Integer, ForeignKey, JSON, Text, DateTime
+
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from backend.db.connection import Base
 
 
@@ -19,15 +20,18 @@ class ResearchSessionHelper(Base):
     # pylint: disable=too-few-public-methods
 
     session_id: Mapped[str] = mapped_column(String, primary_key=True)
-    topic: Mapped[str] = mapped_column(String, index=True)  # Index for topic-based queries
+    topic: Mapped[str] = mapped_column(
+        String, index=True
+    )  # Index for topic-based queries
     status: Mapped[str] = mapped_column(String, default="initialized")
-    logs: Mapped[List[str]] = mapped_column(JSON, default=list)
+    logs: Mapped[list[str]] = mapped_column(JSON, default=list)
     # Serialized version of the full ResearchState Pydantic model
     state_dump: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
+    total_cost: Mapped[float] = mapped_column(nullable=False, default=0.0)
 
     # Relationship to entities found in this session
     # Note: In a real app, we might want a many-to-many if entities are shared,
@@ -41,18 +45,19 @@ class EntityModel(Base):
     __tablename__ = "entities"
 
     canonical_name: Mapped[str] = mapped_column(String, primary_key=True)
-    aliases: Mapped[List[str]] = mapped_column(JSON, default=list)
+    aliases: Mapped[list[str]] = mapped_column(JSON, default=list)
     attributes: Mapped[dict] = mapped_column(JSON, default=dict)
     mention_count: Mapped[int] = mapped_column(Integer, default=0)
 
     # Verification Fields
-    verification_status: Mapped[str] = mapped_column(String, default="UNVERIFIED")  # VERIFIED, UNCERTAIN, REJECTED
+    verification_status: Mapped[str] = mapped_column(
+        String, default="UNVERIFIED"
+    )  # VERIFIED, UNCERTAIN, REJECTED
     rejection_reason: Mapped[str] = mapped_column(String, nullable=True)
     confidence_score: Mapped[float] = mapped_column(Integer, default=0)  # 0-100 score
 
-
     # Relationships
-    evidence: Mapped[List["EvidenceModel"]] = relationship(
+    evidence: Mapped[list["EvidenceModel"]] = relationship(
         "EvidenceModel", back_populates="entity", cascade="all, delete-orphan"
     )
 

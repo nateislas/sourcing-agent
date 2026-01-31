@@ -3,25 +3,26 @@ Crawl4AI-based HTML extraction for the Deep Research Application.
 Handles HTML content extraction using Crawl4AI with Gemini Flash LLM.
 """
 
-import os
 import json
-from typing import Dict, Any, Optional
-from datetime import datetime
-import httpx
+import os
 import tempfile
+from datetime import datetime
+from typing import Any
 
+import httpx
 from crawl4ai import (
     AsyncWebCrawler,
     BrowserConfig,
-    CrawlerRunConfig,
     CacheMode,
+    CrawlerRunConfig,
     LLMConfig,
+    LLMExtractionStrategy,
 )
-from crawl4ai import LLMExtractionStrategy
 
 from backend.research.extraction import AssetExtractionSchema
-from backend.research.state import EvidenceSnippet
 from backend.research.logging_utils import get_session_logger, log_api_call
+from backend.research.pricing import calculate_llm_cost
+from backend.research.state import EvidenceSnippet
 
 
 def generate_extraction_instruction(research_topic: str) -> str:
@@ -196,13 +197,13 @@ class Crawl4AIExtractor:
     Extracts structured asset data from HTML using Crawl4AI + Gemini Flash.
     """
 
-    def __init__(self, research_id: Optional[str] = None):
+    def __init__(self, research_id: str | None = None):
         self.research_id = research_id or "default"
         self.logger = get_session_logger(self.research_id) if research_id else None
 
     async def extract_from_html(
         self, url: str, research_query: str, max_retries: int = 2
-    ) -> Dict[str, Any]:
+    ) -> tuple[dict[str, Any], float]:
         """
         Extracts assets from an HTML page using Crawl4AI.
 
@@ -238,11 +239,13 @@ class Crawl4AIExtractor:
             extraction_strategy=llm_strategy,
             cache_mode=CacheMode.BYPASS,  # Always fetch fresh content
             word_count_threshold=10,  # Min words to consider valid content
+            page_timeout=120000,  # Increase to 120s for slow academic sites
         )
 
         browser_config = BrowserConfig(
             headless=True,
             verbose=False,
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
 
         entities = []
@@ -266,39 +269,44 @@ class Crawl4AIExtractor:
                         self.logger.warning(
                             "Crawl4AI failed for %s: %s", url, result.error_message
                         )
-                    return {"entities": [], "links": [], "is_pdf": False}
+                    return {"entities": [], "links": [], "is_pdf": False}, 0.0
 
                 # Detect if we got PDF content
                 final_url = result.url or url
                 markdown_content = result.markdown or ""
-                
+
                 is_pdf_url = final_url.lower().endswith(".pdf")
                 is_pdf_content_marker = markdown_content.startswith("%PDF-")
-                
+
                 if is_pdf_url or is_pdf_content_marker:
                     if self.logger:
-                        self.logger.info("PDF detected at %s. Downloading binary for LlamaExtract.", url)
-                    
+                        self.logger.info(
+                            "PDF detected at %s. Downloading binary for LlamaExtract.",
+                            url,
+                        )
+
                     # Create a temporary file to store the PDF
                     fd, temp_path = tempfile.mkstemp(suffix=".pdf")
                     os.close(fd)
-                    
+
                     try:
                         async with httpx.AsyncClient(follow_redirects=True) as client:
                             response = await client.get(url, timeout=30.0)
                             response.raise_for_status()
                             with open(temp_path, "wb") as f:
                                 f.write(response.content)
-                        
+
                         return {
                             "entities": [],
                             "links": [],
                             "is_pdf": True,
                             "pdf_path": temp_path,
-                        }
+                        }, 0.0
                     except Exception as e:
                         if self.logger:
-                            self.logger.error("Failed to download PDF from %s: %s", url, e)
+                            self.logger.error(
+                                "Failed to download PDF from %s: %s", url, e
+                            )
                         if os.path.exists(temp_path):
                             os.remove(temp_path)
                         # Continue to normal extraction if download fails (might be a false positive PDF)
@@ -312,7 +320,9 @@ class Crawl4AIExtractor:
                             "crawl4ai",
                             "data_parsed",
                             {"url": url},
-                            {"content": result.extracted_content[:2000]} # Log snippet of data
+                            {
+                                "content": result.extracted_content[:2000]
+                            },  # Log snippet of data
                         )
                     try:
                         extracted_data = json.loads(result.extracted_content)
@@ -322,21 +332,34 @@ class Crawl4AIExtractor:
                             extracted_data = [extracted_data]
 
                         # List of generic terms to filter out if they appear as canonical names
-                        generic_terms = {"none", "unknown", "n/a", "inhibitor", "inhibitors", "molecule", "molecules", "asset", "assets"}
+                        generic_terms = {
+                            "none",
+                            "unknown",
+                            "n/a",
+                            "inhibitor",
+                            "inhibitors",
+                            "molecule",
+                            "molecules",
+                            "asset",
+                            "assets",
+                        }
 
                         # Convert to entity format
                         for asset_data in extracted_data:
                             canonical = asset_data.get("canonical_name")
                             if not canonical or str(canonical).lower() in generic_terms:
                                 continue  # Skip empty or generic extractions
-                            
+
                             # Additional check: if canonical is too long or looks like a sentence, skip
                             if len(str(canonical)) > 100:
                                 continue
 
                             # Create evidence snippet
                             # Use specific excerpt if provided by LLM, else fallback to slashing
-                            excerpt = asset_data.get("evidence_excerpt") or (result.markdown or "")[:500]
+                            excerpt = (
+                                asset_data.get("evidence_excerpt")
+                                or (result.markdown or "")[:500]
+                            )
 
                             snippet = EvidenceSnippet(
                                 source_url=url,
@@ -390,4 +413,19 @@ class Crawl4AIExtractor:
             if self.logger:
                 self.logger.error("Crawl4AI extraction error for %s: %s", url, e)
 
-        return {"entities": entities, "links": links, "is_pdf": False}
+        # Calculate cost based on estimated usage (markdown len input + json output)
+        try:
+            # If markdown_content not defined in scope, assume 0
+            input_len = len(locals().get("markdown_content") or "")
+            output_len = (
+                len(locals().get("result", {}).extracted_content or "")
+                if locals().get("result")
+                else 0
+            )
+            cost = calculate_llm_cost(
+                "gemini-2.5-flash-lite", input_len // 4, output_len // 4
+            )
+        except Exception:
+            cost = 0.0
+
+        return {"entities": entities, "links": links, "is_pdf": False}, cost

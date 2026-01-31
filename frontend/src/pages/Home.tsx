@@ -57,11 +57,27 @@ export const Home: React.FC = () => {
                                                     : 'No date'}
                                             </span>
                                             <span>•</span>
-                                            <span className={session.status === 'completed' ? 'text-green-600' : 'text-amber-600'}>
+                                            <span className={(
+                                                {
+                                                    completed: 'text-green-600',
+                                                    running: 'text-amber-600',
+                                                    failed: 'text-red-600',
+                                                    killed: 'text-orange-600',
+                                                    cancelled: 'text-gray-600',
+                                                    timed_out: 'text-amber-800',
+                                                    verification_pending: 'text-purple-600',
+                                                    initialized: 'text-blue-600'
+                                                } as Record<string, string>)[session.status] || 'text-muted-foreground'}>
                                                 {session.status}
                                             </span>
                                             <span>•</span>
-                                            <span>{session.entities_count} found</span>
+                                            <span>
+                                                {session.entities_count} found
+                                            </span>
+                                            <span>•</span>
+                                            <span className="font-mono text-emerald-600">
+                                                ${session.total_cost?.toFixed(4) || "0.0000"}
+                                            </span>
                                         </div>
                                     </div>
                                     <ArrowRight className="w-5 h-5 text-muted-foreground group-hover:text-primary group-hover:translate-x-1 transition-all" />
