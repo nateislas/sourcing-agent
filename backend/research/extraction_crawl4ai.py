@@ -227,28 +227,41 @@ class Crawl4AIExtractor:
             schema=AssetExtractionSchema.model_json_schema(),
             extraction_type="schema",
             instruction=extraction_instruction,
-            chunk_token_threshold=4000,
-            overlap_rate=0.1,
-            apply_chunking=True,
-            input_format="markdown",
+            # OPTIMIZATION: Gemini Flash has 1M+ context. 
+            # Process typical pages in one shot (no chunking) for speed and context coherence.
+            chunk_token_threshold=100000, 
+            overlap_rate=0.0,
+            apply_chunking=True, # Only triggers for massive documents > 100k tokens
+            input_format="fit_markdown", # Use filtered markdown to reduce noise
             extra_args={"temperature": 0.0},
         )
 
+        from crawl4ai.content_filter_strategy import PruningContentFilter
+
         # Configure crawler
-        page_timeout = int(os.getenv("CRAWL_TIMEOUT", "120000"))
+        page_timeout = int(os.getenv("CRAWL_TIMEOUT", "60000")) # Fail faster (60s)
         crawl_config = CrawlerRunConfig(
             extraction_strategy=llm_strategy,
             cache_mode=CacheMode.BYPASS,
             word_count_threshold=10,
             page_timeout=page_timeout,
-            # magic=True helps with some anti-bot detection if needed, 
-            # though it can be slower. Enabling it for robustness.
+            # Robustness settings
             magic=True,
+            remove_overlay_elements=True,
+            # Content filtering to feed cleaner data to LLM
+            content_filter=PruningContentFilter(
+                threshold=0.48, 
+                threshold_type="fixed", 
+                min_word_threshold=50
+            ),
+            excluded_tags=['nav', 'footer', 'header', 'aside', 'script', 'style'],
         )
 
         browser_config = BrowserConfig(
             headless=True,
             verbose=False,
+            # Block images/fonts to speed up load time since we only need text
+            text_mode=True, 
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         )
 
