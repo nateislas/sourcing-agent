@@ -41,7 +41,7 @@ export const Dashboard: React.FC = () => {
 
     // Polling
     useEffect(() => {
-        if (!state || ['completed', 'failed', 'killed', 'cancelled', 'timed_out'].includes(state.status)) return;
+        if (!state || ['completed', 'failed'].includes(state.status)) return;
 
         const interval = setInterval(fetchData, 3000); // Poll every 3s
         return () => clearInterval(interval);

@@ -62,9 +62,6 @@ export const Home: React.FC = () => {
                                                     completed: 'text-green-600',
                                                     running: 'text-amber-600',
                                                     failed: 'text-red-600',
-                                                    killed: 'text-orange-600',
-                                                    cancelled: 'text-gray-600',
-                                                    timed_out: 'text-amber-800',
                                                     verification_pending: 'text-purple-600',
                                                     initialized: 'text-blue-600'
                                                 } as Record<string, string>)[session.status] || 'text-muted-foreground'}>

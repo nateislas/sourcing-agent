@@ -136,6 +136,8 @@ class DeepResearchWorkflow(Workflow):
             status=result.get("status", "PRODUCTIVE"),
             extracted_data=result.get("extracted_data", []),
             discovered_links=result.get("discovered_links", []),
+            query_history=result.get("query_history", []),
+            search_engine_history=result.get("search_engine_history", []),
             cost=result.get("cost", 0.0),
         )
 
@@ -176,6 +178,8 @@ class DeepResearchWorkflow(Workflow):
                 w_state.entities_found += res.entities_found
                 w_state.new_entities += res.new_entities
                 w_state.status = res.status
+                w_state.query_history = res.query_history
+                w_state.search_engine_history = res.search_engine_history
                 total_new_entities += res.new_entities
                 total_pages += res.pages_fetched
 

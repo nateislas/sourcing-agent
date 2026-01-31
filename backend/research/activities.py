@@ -376,7 +376,7 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
                     scored_links.sort(key=lambda x: x.get("adjusted_score", x["score"]), reverse=True)
                     
                     # Take top N based on available queue space
-                    available_space = link_filter.MAX_QUEUE_SIZE - current_queue_size
+                    available_space = max(0, link_filter.MAX_QUEUE_SIZE - current_queue_size)
                     top_links = scored_links[:available_space]
                     
                     # Track domain performance (Phase 3)
@@ -401,7 +401,7 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
                     )
                 else:
                     # Queue pressure low - add all filtered links up to cap
-                    available_space = link_filter.MAX_QUEUE_SIZE - current_queue_size
+                    available_space = max(0, link_filter.MAX_QUEUE_SIZE - current_queue_size)
                     
                     for link in filtered_links[:available_space]:
                         # Track domain performance (Phase 3)
@@ -427,7 +427,6 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
                 "engine": search_engine,
                 "results": len(url_queue),
                 "new_entities": globally_new_count,
-                "parameters": query_params,
             }
         )
 
@@ -466,6 +465,8 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
             "extracted_data": new_entities_found,  # For orchestrator to merge into state
             "discovered_links": discovered_links,  # For orchestrator to add to queues
             "consumed_urls": url_queue,  # URLs processed in this iteration (from search + personal queue)
+            "query_history": worker_state.query_history,
+            "search_engine_history": worker_state.search_engine_history,
             "cost": iteration_cost,
         }
     finally:

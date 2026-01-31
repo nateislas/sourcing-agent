@@ -51,7 +51,7 @@ export const ResearchTimeline: React.FC<Props> = ({ status, iteration }) => {
         }
     ];
 
-    if (['failed', 'killed', 'cancelled', 'timed_out'].includes(status)) {
+    if (status === 'failed') {
         const activeIndex = stages.findIndex(s => s.isActive || !s.isDone);
         if (activeIndex !== -1) {
             stages[activeIndex] = {

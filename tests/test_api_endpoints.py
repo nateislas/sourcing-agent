@@ -17,15 +17,17 @@ def mock_repo_class():
         yield MockRepo
 
 @pytest.fixture
-def client(mock_repo_class):
+def client(_mock_repo_class):
     # Depending on implementation, we might need to patch AsyncSessionLocal too if it tries to connect
     # But usually creating the session object is cheap/sync if not entered.
     # However, 'async with AsyncSessionLocal() as session' will enter context.
     # So we should patch AsyncSessionLocal to return a mock session.
     with patch("backend.api.AsyncSessionLocal") as MockSession:
         MockSession.return_value.__aenter__.return_value = AsyncMock()
-        with TestClient(app) as test_client:
-             yield test_client
+        # Mock init_db to prevent real database initialization
+        with patch("backend.api.init_db", new_callable=AsyncMock):
+            with TestClient(app) as test_client:
+                 yield test_client
 
 
 def test_read_history(client):

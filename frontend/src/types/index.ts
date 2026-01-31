@@ -64,7 +64,7 @@ export interface WorkerState {
 export interface ResearchState {
     id: string;
     topic: string;
-    status: "initialized" | "running" | "verification_pending" | "completed" | "failed" | "killed" | "cancelled" | "timed_out";
+    status: "initialized" | "running" | "verification_pending" | "completed" | "failed";
     known_entities: Record<string, Entity>;
     visited_urls: string[];
     workers: Record<string, WorkerState>;

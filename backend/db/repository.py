@@ -3,6 +3,8 @@ Repository pattern for separating data access from business logic.
 Handles conversion between Domain Models (Pydantic) and Persistence Models (SQLAlchemy).
 """
 
+from typing import Optional
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -179,7 +181,7 @@ class ResearchRepository:
 
         await self.session.commit()
 
-    async def get_entity(self, canonical_name: str) -> Entity | None:
+    async def get_entity(self, canonical_name: str) -> Optional[Entity]:
         """
         Retrieves a hydrated Entity by its canonical name.
         Args:

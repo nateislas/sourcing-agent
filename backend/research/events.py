@@ -39,6 +39,8 @@ class WorkerResultEvent(Event):
     discovered_links: list[str] = Field(
         default_factory=list
     )  # URLs found for further exploration
+    query_history: list[dict] = Field(default_factory=list)
+    search_engine_history: list[dict] = Field(default_factory=list)
     cost: float = 0.0
 
 

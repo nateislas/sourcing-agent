@@ -62,7 +62,7 @@ class InitialPlanningWorkflow(Workflow):
                 response.text,
             )
 
-        # Calculate cost
+        # Calculate cost (do this before parsing to ensure it's captured even on errors)
         cost = 0.0
         try:
             # Estimate or extract usage
@@ -80,7 +80,10 @@ class InitialPlanningWorkflow(Workflow):
 
             cost = calculate_llm_cost(self.llm.model, input_tokens, output_tokens)
         except Exception:
-            cost = 0.0
+            # Fallback to rough estimate
+            cost = calculate_llm_cost(
+                self.llm.model, len(prompt_str) // 4, len(response.text) // 4
+            )
 
         try:
             # Parse JSON
@@ -118,7 +121,7 @@ class InitialPlanningWorkflow(Workflow):
             AttributeError,
             TypeError,
         ) as e:
-            # Fallback Plan
+            # Fallback Plan (preserve cost calculation)
             if self.logger:
                 self.logger.error("Planning failed: %s", e)
 
@@ -138,5 +141,6 @@ class InitialPlanningWorkflow(Workflow):
                 reasoning="Fallback due to JSON parsing error in planning.",
                 current_hypothesis="Fallback Plan",
                 findings_summary=f"Error parsing plan: {e}",
+                cost=cost,  # Include cost even in fallback
             )
             return StopEvent(result=fallback_plan)

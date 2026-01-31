@@ -82,6 +82,40 @@ class PerplexitySearchClient:
         if isinstance(queries, list):
             for query_results in response.results:
                 for res in query_results:
+                    # Handle both tuple format (title, url, snippet) and object format
+                    if isinstance(res, tuple):
+                        title, url, snippet = res
+                        results.append(
+                            SearchResult(
+                                title=title,
+                                url=url,
+                                snippet=snippet,
+                                source="perplexity",
+                            )
+                        )
+                    else:
+                        results.append(
+                            SearchResult(
+                                title=res.title,
+                                url=res.url,
+                                snippet=res.snippet,
+                                source="perplexity",
+                            )
+                        )
+        else:
+            for res in response.results:
+                # Handle both tuple format (title, url, snippet) and object format
+                if isinstance(res, tuple):
+                    title, url, snippet = res
+                    results.append(
+                        SearchResult(
+                            title=title,
+                            url=url,
+                            snippet=snippet,
+                            source="perplexity",
+                        )
+                    )
+                else:
                     results.append(
                         SearchResult(
                             title=res.title,
@@ -90,16 +124,6 @@ class PerplexitySearchClient:
                             source="perplexity",
                         )
                     )
-        else:
-            for res in response.results:
-                results.append(
-                    SearchResult(
-                        title=res.title,
-                        url=res.url,
-                        snippet=res.snippet,
-                        source="perplexity",
-                    )
-                )
         return results
 
 

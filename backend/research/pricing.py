@@ -6,32 +6,39 @@ from typing import Any
 
 
 # Pricing configuration (Cost in USD)
+# TODO: Review and update pricing quarterly from official sources
+# Last verified: 2026-01-31
+# Sources:
+# - Google AI: https://ai.google.dev/pricing
+# - Tavily: https://tavily.com/pricing
+# - Perplexity: https://docs.perplexity.ai/pricing
+# - LlamaCloud: https://www.llamaindex.ai/pricing
 PRICING_CONFIG: dict[str, Any] = {
     # LLM Pricing (per million tokens)
     "llm": {
-        "gemini-2.0-flash-exp": {"input": 0.0, "output": 0.0},  # Free preview (Correct)
-        "gemini-1.5-flash": {"input": 0.075, "output": 0.30},  # Correct for standard context
-        "gemini-1.5-pro": {"input": 1.25, "output": 5.00},  # Updated from user's 3.50/10.50
-        "gemini-pro": {"input": 0.50, "output": 1.50},  # Legacy 1.0 (Correct)
-        "gemini-2.5-flash-lite": {
-            "input": 0.10,
-            "output": 0.40,
-        },  # Updated from user's 0.075/0.30
-        "gemini-3-flash-preview": {
-            "input": 0.50,
-            "output": 3.00,
-        },  # Added model
-        # Default fallback (updated to match latest flash-lite rates)
-        "default": {"input": 0.10, "output": 0.40},
+        "gemini-2.0-flash-exp": {"input": 0.0, "output": 0.0},  # Free preview (verified)
+        "gemini-1.5-flash": {"input": 0.075, "output": 0.30},  # Verified
+        "gemini-1.5-pro": {"input": 1.25, "output": 5.00},  # Verified
+        # UNVERIFIED: Legacy models - pricing may have changed
+        "gemini-pro": {"input": 0.50, "output": 1.50},  # UNVERIFIED - Legacy 1.0
+        # UNVERIFIED: Preview models - no public pricing available
+        # "gemini-2.5-flash-lite": {"input": 0.10, "output": 0.40},  # UNVERIFIED
+        # "gemini-3-flash-preview": {"input": 0.50, "output": 3.00},  # UNVERIFIED
+        # Default fallback
+        "default": {"input": 0.075, "output": 0.30},  # Use flash pricing as default
     },
     # Search Pricing (per 1000 requests)
     "search": {
-        "tavily": 8.00,  # Updated from user's 5.00
-        "perplexity": 5.00,  # $5 per 1000 searches (Search API plan) (Correct)
+        "tavily_basic": 8.00,  # $8/1000 for basic search (verified)
+        "tavily_advanced": 16.00,  # $16/1000 for advanced search (verified)
+        "tavily": 8.00,  # Default to basic pricing
+        "perplexity": 5.00,  # $5/1000 searches (verified)
     },
-    # Extraction Pricing (per 1000 pages)
+    # Extraction Pricing
     "crawling": {
-        "llama-cloud": 3.00,  # $0.003 per page (Correct)
+        # UNVERIFIED: LlamaCloud uses tiered pricing, not flat $0.003/page
+        # TODO: Implement tiered pricing based on actual LlamaCloud pricing tiers
+        "llama-cloud": 3.00,  # UNVERIFIED - placeholder at $3/1000 pages
     },
 }
 
