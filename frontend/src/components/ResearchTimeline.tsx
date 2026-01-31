@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle2, Clock, Search, ShieldCheck, Flag, AlertCircle } from 'lucide-react';
+import { CheckCircle2, Clock, Search, ShieldCheck, AlertCircle } from 'lucide-react';
 import type { ResearchState } from '../types';
 
 interface Props {
@@ -18,20 +18,12 @@ export const ResearchTimeline: React.FC<Props> = ({ status, iteration }) => {
             description: 'Initializing research workers and strategy'
         },
         {
-            id: 'discovery',
-            label: 'Discovery',
+            id: 'research',
+            label: 'Research',
             icon: Search,
-            isActive: status === 'running' && iteration <= 2,
-            isDone: (status === 'running' && iteration > 2) || ['verification_pending', 'completed'].includes(status),
-            description: `Broad exploration (Iteration ${Math.min(iteration, 2)})`
-        },
-        {
-            id: 'deep-dive',
-            label: 'Deep Dive',
-            icon: Flag,
-            isActive: status === 'running' && iteration > 2,
+            isActive: status === 'running',
             isDone: ['verification_pending', 'completed'].includes(status),
-            description: iteration > 2 ? `Targeted extraction (Iteration ${iteration})` : 'Targeted entity extraction'
+            description: `Iterative exploration (Iteration ${iteration})`
         },
         {
             id: 'verification',

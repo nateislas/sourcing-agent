@@ -90,22 +90,25 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
         if not all_queries:
             all_queries = [worker_state.strategy]
 
-        # Distribute max_results across all queries
-        base_max_results = int(os.getenv("PERPLEXITY_MAX_RESULTS", "5"))
-        results_per_query = max(base_max_results // len(all_queries), 3)
-
         # Random engine selection (50/50 Perplexity vs Tavily)
         import random
 
         from backend.research.client_search import TavilySearchClient
 
         search_engine = random.choice(["perplexity", "tavily"])
+        
+        # Determine max_results based on engine
+        if search_engine == "perplexity":
+             results_per_query = int(os.getenv("PERPLEXITY_MAX_RESULTS", "20"))
+        else:
+             results_per_query = int(os.getenv("TAVILY_MAX_RESULTS", "20"))
 
         safe_get_logger().info(
-            "Worker %s using %s for %d queries: %s",
+            "Worker %s using %s for %d queries (limit %d/query): %s",
             worker_state.id,
             search_engine,
             len(all_queries),
+            results_per_query,
             all_queries[:2],  # Log first 2 to avoid huge logs
         )
 
@@ -595,6 +598,63 @@ async def verify_entity(entity_data: dict, constraints: dict) -> dict:
 
     return output
 
+@activity.defn
+async def deduplicate_entities(entities: list[Entity]) -> list[Entity]:
+    """
+    Deduplicates a list of entities using the VerificationAgent.
+    """
+    safe_get_logger().info("Deduplicating %d entities...", len(entities))
+    agent = VerificationAgent()
+    # Uses the thinking model defined in .env
+    merged = await agent.deduplicate_entities(entities)
+    safe_get_logger().info("Deduplication complete. Reduced %d -> %d entities.", len(entities), len(merged))
+    return merged
+
+
+@activity.defn
+async def deep_verify_entity(
+    entity: Entity, constraints: dict
+) -> dict: # Returns VerificationResult
+    """
+    Performs 'Deep Read' verification by fetching full page content.
+    """
+    safe_get_logger().info("Deep verifying entity: %s", entity.canonical_name)
+    
+    # Identify top evidence URLs (Tier 1/2) 
+    # For now, just take top 3 unique URLs from existing snippets
+    urls = list(set(s.source_url for s in entity.evidence))[:3]
+    
+    if urls:
+        extractor = Crawl4AIExtractor()
+        new_snippets = []
+        for url in urls:
+            safe_get_logger().info("Fetching full text for deep verify: %s", url)
+            content = await extractor.fetch_page_content(url)
+            if content:
+                # Limit content size to avoid context overflow (approx 20k tokens)
+                truncated_content = content[:80000] 
+                new_snippets.append(EvidenceSnippet(
+                    source_url=url,
+                    content=truncated_content,
+                    timestamp=datetime.utcnow().isoformat() + "Z"
+                ))
+        
+        if new_snippets:
+            # Replace snippets with full content for the verification step
+            # We clone the entity to avoid mutating state persistently with huge text
+            # if we don't want to save it (optional). 
+            # Actually, let's just use a temporary entity object for verification.
+            entity.evidence = new_snippets
+
+    agent = VerificationAgent()
+    result, cost = await agent.verify_entity(entity, constraints)
+    
+    # Return wrapper dict with both result and updated entity data
+    return {
+        "verification_result": result.model_dump(),
+        "updated_entity": entity.model_dump(),
+        "cost": cost
+    }
 
 @activity.defn
 async def analyze_gaps(entity_data: dict, verification_result: dict) -> list[str]:

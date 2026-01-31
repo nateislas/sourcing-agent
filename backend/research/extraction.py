@@ -32,7 +32,7 @@ class AssetExtractionSchema(BaseModel):
 EXTRACT (Examples of what TO extract):
 - Named compounds: "ISM9274", "dinaciclib", "niraparib", "olaparib"
 - Development codes: "BMS-986158", "CT7439", "CTX-712", "SR-4835"
-- Research codes: "Compound 7f", "compound 14k", "YJZ5118"
+- Research codes: "Compound 7f", "compound 14k", "YJZ5118", "Example 42"
 - Program names: "AI-designed covalent CDK12/13 inhibitor ISM9274"
 
 DO NOT EXTRACT (Examples of what NOT to extract):
@@ -42,15 +42,17 @@ DO NOT EXTRACT (Examples of what NOT to extract):
 - Mechanisms: "DNA damage response", "cell cycle regulation"
 - General concepts: "chemotherapy", "immunotherapy"
 
-CRITICAL: If the text only mentions generic classes or targets without naming a specific 
-compound with an identifier or proper name, DO NOT extract anything. Return empty.
-Only extract if you can identify a SPECIFIC asset with a name or code."""
+CRITICAL:
+1. Capture CODE STRINGS exactly as they appear (e.g., "Compound 7a").
+2. Do NOT normalize or change the case unless it's obviously a title.
+3. If multiple names exist, pick the most specific code or official name as canonical."""
     )
     aliases: list[str] | None = Field(
         description="""Alternative names or codes for this SAME asset.
 Examples: 
 - ["compound 14k"] as alias for "YJZ5118"
 - ["BMS-986016"] as alias for "Relatlimab"
+- ["Structure 3", "Ex. 4"] as aliases for "Compound 3"
 Only include aliases that refer to the exact same therapeutic asset.""",
         default_factory=list,
     )
@@ -71,7 +73,7 @@ Only include aliases that refer to the exact same therapeutic asset.""",
         default=None,
     )
     geography: str | None = Field(
-        description="Geographic scope or location if specified (e.g. China, US, Europe)",
+        description="Geographic scope or location if specified (e.g. Global, US, EU, Japan, China)",
         default=None,
     )
     owner: str | None = Field(
@@ -83,8 +85,13 @@ Only include aliases that refer to the exact same therapeutic asset.""",
         default_factory=list,
     )
     evidence_excerpt: str | None = Field(
-        description="""A concise, verbatim excerpt from the text that mentions the asset identifier and provides evidence for its relevance or attributes (e.g., target, stage, owners). 
-        CRITICAL: This MUST be a verbatim string from the source text to ensure the result is auditable.""",
+        description="""A concise, VERBATIM excerpt from the text that mentions the asset identifier and provides evidence.
+        
+        CRITICAL RULES for Evidence:
+        1. MUST be a direct copy-paste from the source text.
+        2. Do NOT summarize, paraphrase, or fix typos.
+        3. Must contain the Asset Name/Code to be auditable.
+        4. If the text says "Compound 7a showed potent activity", the excerpt must include "Compound 7a".""",
         default=None,
     )
 

@@ -135,7 +135,8 @@ class LinkScorer:
         )
 
         try:
-            llm_client = LLMClient(model_name=self.model)
+            temperature = float(os.getenv("DEFAULT_LLM_TEMPERATURE", "0.4"))
+            llm_client = LLMClient(model_name=self.model, temperature=temperature)
             response_text, cost = await llm_client.generate(prompt)
             
             # Parse the array of results

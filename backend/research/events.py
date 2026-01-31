@@ -91,3 +91,20 @@ class GapFilledEvent(Event):
 
     worker_id: str
     cost: float = 0.0
+
+
+class DeepVerifyEntityEvent(Event):
+    """Event triggered to Deep Read Verify a specific entity."""
+    entity: dict
+    constraints: dict
+
+
+class DeepVerifyResultEvent(Event):
+    """Event carrying the Deep Verify result for a single entity."""
+    result: dict
+    cost: float = 0.0
+
+
+class DeduplicationStartEvent(Event):
+    """Signals the start of the Deduplication phase."""
+

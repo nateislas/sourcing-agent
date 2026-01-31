@@ -72,7 +72,7 @@ class LLMHandler:
         return getattr(self.llm, name)
 
 
-def get_llm(model_name: str | None = None, thinking_budget: int | None = None):
+def get_llm(model_name: str | None = None, thinking_budget: int | None = None, temperature: float | None = None):
     """
     Returns a configured LLMHandler instance (wrapped GoogleGenAI).
     The API key is retrieved from GEMINI_API_KEY or GOOGLE_API_KEY environment variables.
@@ -96,15 +96,24 @@ def get_llm(model_name: str | None = None, thinking_budget: int | None = None):
     else:
         model_name = "models/gemini-2.0-flash"
 
-    # Configure thinking mode for models that support it (like gemini-3)
+    # Configure thinking mode for models that support it (gemini-3 or thinking experimental models)
+    pass_thinking_config = False
+    if thinking_budget:
+        if "gemini-3" in model_name or "thinking" in model_name:
+            pass_thinking_config = True
+
     kwargs = {}
-    if thinking_budget and "gemini-3" in model_name:
+    if pass_thinking_config:
         # Note: LlamaIndex GoogleGenAI passes extra kwargs to the GenerativeModel
         # Gemini Thinking mode uses thinking_config
         kwargs["thinking_config"] = {
             "include_thoughts": True,
             "token_limit": thinking_budget
         }
+
+    # Pass temperature if provided
+    if temperature is not None:
+        kwargs["temperature"] = temperature
 
     llm = GoogleGenAI(model=model_name, api_key=api_key, **kwargs)
     return LLMHandler(llm, thinking_budget=thinking_budget)
@@ -116,13 +125,13 @@ class LLMClient:
     Supports structured output generation.
     """
 
-    def __init__(self, model_name: str | None = None, thinking_budget: int | None = None):
+    def __init__(self, model_name: str | None = None, thinking_budget: int | None = None, temperature: float | None = None):
         if model_name is None:
             model_name = os.getenv("DEFAULT_LLM_MODEL")
             if not model_name:
                 logger.warning("DEFAULT_LLM_MODEL not set in .env. Falling back to gemini-2.0-flash.")
                 model_name = "gemini-2.0-flash"
-        self.llm = get_llm(model_name, thinking_budget=thinking_budget)
+        self.llm = get_llm(model_name, thinking_budget=thinking_budget, temperature=temperature)
 
     async def generate(
         self, prompt: str, response_model: Any = None

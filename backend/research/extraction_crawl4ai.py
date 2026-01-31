@@ -2,6 +2,7 @@
 Crawl4AI-based HTML extraction for the Deep Research Application.
 Handles HTML content extraction using Crawl4AI with Gemini Flash LLM.
 """
+from __future__ import annotations
 
 import json
 import os
@@ -34,7 +35,7 @@ def generate_extraction_instruction(research_topic: str) -> str:
     - Don't filter: Don't apply strict constraints (stage, geography, etc.) yet
 
     Args:
-        research_topic: The research query or topic (e.g., "CDK12 small molecule, preclinical, TNBC, China")
+        research_topic: The research query or topic (e.g., "CDK12 small molecule, preclinical, TNBC, Worldwide")
 
     Returns:
         Detailed extraction instruction string
@@ -120,7 +121,7 @@ For EACH asset you extract, apply these inference rules to populate attributes:
 **Geography Extraction (Regional Focus):**
 - IF text mentions country name with asset → geography = country
 - IF company HQ location is known/mentioned → geography = company location
-- IF trial registry ID prefix is known (e.g. ChiCTR -> China, JPRN -> Japan, NCT -> US/Global, EudraCT -> EU) → geography = region
+- IF trial registry ID prefix is known (e.g. NCT -> US/Global, EudraCT -> EU, ChiCTR -> China, JPRN -> Japan, CRiS -> Korea) → geography = region
 - Extract ANY mentioned geography or region associated with the asset's development.
 
 **Indication Extraction (Disease/Condition):**
@@ -233,8 +234,8 @@ class Crawl4AIExtractor:
             chunk_token_threshold=100000, 
             overlap_rate=0.0,
             apply_chunking=True, # Only triggers for massive documents > 100k tokens
-            input_format="fit_markdown", # Use filtered markdown to reduce noise
-            extra_args={"temperature": 0.0},
+            input_format="markdown", # Use raw markdown to avoid over-pruning tables/lists
+            extra_args={"temperature": float(os.getenv("EXTRACTION_TEMPERATURE", "0.4"))},
         )
 
         # Configure crawler
@@ -255,7 +256,7 @@ class Crawl4AIExtractor:
             verbose=False,
             # Block images/fonts to speed up load time since we only need text
             text_mode=True, 
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
         )
 
         total_cost = 0.0
@@ -455,3 +456,32 @@ class Crawl4AIExtractor:
         if res:
             return res[0], cost
         return {"entities": [], "links": [], "is_pdf": False, "url": url}, 0.0
+
+    async def fetch_page_content(self, url: str) -> str:
+        """
+        Fetches the raw markdown content of a page without LLM extraction.
+        Useful for 'Deep Read' verification.
+        """
+        browser_config = BrowserConfig(
+            headless=True,
+            text_mode=True,
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        )
+        crawl_config = CrawlerRunConfig(
+            cache_mode=CacheMode.BYPASS,
+            word_count_threshold=10,
+            magic=True,
+            remove_overlay_elements=True,
+            excluded_tags=['nav', 'footer', 'header', 'aside', 'script', 'style'],
+        )
+
+        try:
+            async with AsyncWebCrawler(config=browser_config) as crawler:
+                result = await crawler.arun(url, config=crawl_config)
+                if result.success:
+                    return result.markdown or ""
+        except Exception as e:
+            if self.logger:
+                self.logger.error("Failed to fetch raw content for %s: %s", url, e)
+        
+        return ""

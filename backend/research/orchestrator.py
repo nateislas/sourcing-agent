@@ -27,6 +27,9 @@ from backend.research.events import (
     VerifyEntityEvent,
     WorkerResultEvent,
     WorkerStartEvent,
+    DeepVerifyEntityEvent,
+    DeepVerifyResultEvent,
+    DeduplicationStartEvent,
 )
 from backend.research.logging_utils import get_session_logger
 from backend.research.state import Entity, ResearchState, WorkerState
@@ -299,7 +302,8 @@ class DeepResearchWorkflow(Workflow):
             state.logs.append(msg)
             logger.info(msg)
 
-        if global_novelty < 0.05 and state.iteration_count > 1:
+        novelty_threshold = float(os.getenv("NOVELTY_THRESHOLD", "0.05"))
+        if global_novelty < novelty_threshold and state.iteration_count > 1:
             should_stop = True
             msg = f"Stopping: Low novelty detected ({global_novelty:.2%})."
             state.logs.append(msg)
@@ -408,9 +412,10 @@ class DeepResearchWorkflow(Workflow):
     @step
     async def aggregate_verification(
         self, ctx: Context, ev: VerificationResultEvent
-    ) -> StopEvent | GapFillingStartEvent | GapFillEvent | None:
+    ) -> StopEvent | DeepVerifyEntityEvent | DeduplicationStartEvent | None:
         """
-        Aggregates verification results and updates state.
+        Aggregates initial verification results. 
+        Triggers Deep Verification for UNCERTAIN entities.
         """
         state: ResearchState = await ctx.store.get("state")
         num_entities = len(state.known_entities)
@@ -421,12 +426,10 @@ class DeepResearchWorkflow(Workflow):
             return None
 
         logger = get_session_logger(state.id)
-        logger.info("All verification tasks completed.")
+        logger.info("Initial verification tasks completed.")
 
         # Update state with results
-        verified_count = 0
-        rejected_count = 0
-        uncertain_count = 0
+        uncertain_entities = []
 
         for res_ev in events:
             res = res_ev.result
@@ -439,37 +442,142 @@ class DeepResearchWorkflow(Workflow):
 
                 state.total_cost += res_ev.cost
 
-                if ent.verification_status == "VERIFIED":
-                    verified_count += 1
-                elif ent.verification_status == "REJECTED":
-                    rejected_count += 1
-                else:
-                    uncertain_count += 1
-
-        gap_events_dispatched = 0
-        if uncertain_count > 0:
-            logger.info(
-                "Found %d uncertain entities. Triggering gap analysis.", uncertain_count
-            )
-
-            # Identify gaps and dispatch events
-            for res_ev in events:
-                res = res_ev.result
-                if res.get("status") == "UNCERTAIN":
-                    ent_data = state.known_entities[res["canonical_name"]].model_dump()
-                    queries = await activities.analyze_gaps(ent_data, res)
-                    if queries:
-                        ctx.send_event(GapFillEvent(entity=ent_data, queries=queries))
-                        gap_events_dispatched += 1
-
-        summary_msg = (
-            f"Verification Complete: {verified_count} Verified, "
-            f"{rejected_count} Rejected, {uncertain_count} Uncertain."
-        )
-        state.logs.append(summary_msg)
-        logger.info(summary_msg)
+                if ent.verification_status == "UNCERTAIN":
+                    uncertain_entities.append(ent)
 
         await activities.save_state(state)
+
+        # Trigger Deep Verification for Uncertains
+        if uncertain_entities:
+            logger.info("Triggering Deep Verification for %d uncertain entities.", len(uncertain_entities))
+            for ent in uncertain_entities:
+                ctx.send_event(DeepVerifyEntityEvent(entity=ent, constraints=state.constraints))
+            return None # Waiting for deep verify events processing
+            
+        # If no uncertains, proceed to deduplication
+        return DeduplicationStartEvent()
+
+    @step
+    async def deep_verify(self, ctx: Context, ev: DeepVerifyEntityEvent) -> DeepVerifyResultEvent:
+        """
+        Executes Deep Read Verification for a single entity.
+        """
+        # Call activity (returns dict with verification_result and updated_entity)
+        full_res = await activities.deep_verify_entity(ev.entity, ev.constraints)
+        return DeepVerifyResultEvent(
+            result=full_res, 
+            cost=full_res.get("cost", 0.0)
+        )
+
+    @step
+    async def aggregate_deep_verification(
+        self, ctx: Context, ev: DeepVerifyResultEvent
+    ) -> DeduplicationStartEvent | None:
+        """
+        Aggregates deep verification results, updates state, then triggers Deduplication.
+        """
+        state: ResearchState = await ctx.store.get("state")
+        
+        uncertain_count = sum(1 for e in state.known_entities.values() if e.verification_status == "UNCERTAIN")
+        
+        events = ctx.collect_events(ev, [DeepVerifyResultEvent] * uncertain_count)
+        if events is None:
+            return None
+            
+        logger = get_session_logger(state.id)
+        logger.info("Deep verification tasks completed.")
+        
+        # Update state with DEEP verification results
+        for res_ev in events:
+            full_res = res_ev.result
+            ver_res = full_res.get("verification_result", {})
+            updated_entity_data = full_res.get("updated_entity")
+            
+            canonical = ver_res.get("canonical_name")
+            
+            # Update the entity in state with the one returned from activity (contains deep read evidence)
+            if updated_entity_data:
+                # Re-construct Entity object from dict
+                updated_ent = Entity(**updated_entity_data)
+                # Ensure we update the correct one in state (canonical might match)
+                if canonical:
+                     state.known_entities[canonical] = updated_ent
+
+            # Double check status update (should be in the entity object, but verify_entity updates the result object, not the entity status field directly in the return logic of activity usually? 
+            # actually verify_entity logic in activity didn't update entity.status, it returned a result. 
+            # So we still need to apply status from ver_res to the entity in state.)
+            if canonical and canonical in state.known_entities:
+                ent = state.known_entities[canonical]
+                ent.verification_status = ver_res.get("status", "UNCERTAIN")
+                ent.rejection_reason = ver_res.get("rejection_reason")
+                ent.confidence_score = ver_res.get("confidence", 0.0)
+                
+                state.total_cost += res_ev.cost
+        
+        await activities.save_state(state)
+        return DeduplicationStartEvent()
+
+    @step
+    async def run_deduplication(self, ctx: Context, ev: DeduplicationStartEvent) -> StopEvent | GapFillingStartEvent:
+        """
+        Runs deduplication on all known entities.
+        """
+        state: ResearchState = await ctx.store.get("state")
+        
+        # Convert dict values to list for deduplication
+        entities_list = list(state.known_entities.values())
+        
+        # specific activity for deduplication
+        merged_entities = await activities.deduplicate_entities(entities_list)
+        
+        # Rebuild state.known_entities
+        # Clear old map
+        state.known_entities = {e.canonical_name: e for e in merged_entities}
+        
+        logger = get_session_logger(state.id)
+        logger.info(f"Deduplication finished. {len(entities_list)} -> {len(merged_entities)} entities.")
+        
+        await activities.save_state(state)
+        
+        # Now proceed to Gap Filling Logic (similar to old aggregate_verification tail)
+        uncertain_count = sum(1 for e in state.known_entities.values() if e.verification_status == "UNCERTAIN")
+        
+        gap_events_dispatched = 0
+        if uncertain_count > 0:
+             logger.info("Found %d uncertain entities after deduplication. Triggering gap analysis.", uncertain_count)
+             for ent in state.known_entities.values():
+                 if ent.verification_status == "UNCERTAIN":
+                     # We need strict typing for analyze_gaps input or mock result
+                     # analyze_gaps takes (entity_data, verification_result_dict)
+                     # We can reconstruct partial verification result from entity fields
+                     mock_res = {
+                         "status": "UNCERTAIN",
+                         "missing_fields": [], # We need to re-derive missing fields or store them? 
+                         # Verify result had missing_fields. Entity doesn't store them explicitly in schema?
+                         # Schema has `attributes`. We can infer missing?
+                         # Or we should have stored `missing_fields` in Entity extra fields?
+                         # For now, let's infer missing P0 fields for gap analysis.
+                     }
+                     # Actually analyze_gaps logic:
+                     # canonical_name = entity_data.get("canonical_name")
+                     # missing_fields = verification_result.get("missing_fields", [])
+                     # ... checks "owner" in missing_fields etc.
+                     
+                     # Better: Check empty attributes directly here or in activity?
+                     # Let's verify what `analyze_gaps` expects.
+                     # It expects `missing_fields` list.
+                     
+                     missing = []
+                     if not ent.attributes.get("owner"): missing.append("owner")
+                     if not ent.attributes.get("product_stage") and not ent.clinical_phase: missing.append("product_stage")
+                     if not ent.attributes.get("indication"): missing.append("indication")
+                     
+                     mock_res["missing_fields"] = missing
+                     
+                     queries = await activities.analyze_gaps(ent.model_dump(), mock_res)
+                     if queries:
+                         ctx.send_event(GapFillEvent(entity=ent.model_dump(), queries=queries))
+                         gap_events_dispatched += 1
 
         if gap_events_dispatched > 0:
             logger.info("Dispatching %d gap-filling tasks.", gap_events_dispatched)

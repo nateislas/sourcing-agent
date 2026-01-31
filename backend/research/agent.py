@@ -149,7 +149,8 @@ class ResearchAgent:
         # Call LLM
         model_name = self.model_name
         # Use planning budget for adaptive planning
-        llm = get_llm(model_name=model_name, thinking_budget=self.planning_thinking_budget)
+        temperature = float(os.getenv("RESEARCH_TEMPERATURE", "1.0"))
+        llm = get_llm(model_name=model_name, thinking_budget=self.planning_thinking_budget, temperature=temperature)
         messages = [ChatMessage(role="user", content=prompt)]
 
         try:

@@ -2,6 +2,7 @@
 Clients for external search APIs (Perplexity and Tavily).
 Provides wrappers for structured search results and logging.
 """
+from __future__ import annotations
 
 import asyncio
 import os
@@ -196,6 +197,7 @@ class TavilySearchClient:
         query: str | list[str],
         max_results: int | None = None,
         include_raw_content: bool | None = None,
+        search_depth: str | None = None,
         **kwargs,
     ) -> list[SearchResult]:
         """
@@ -208,6 +210,8 @@ class TavilySearchClient:
             include_raw_content = (
                 os.getenv("TAVILY_INCLUDE_RAW_CONTENT", "true").lower() == "true"
             )
+        if search_depth is None:
+            search_depth = os.getenv("TAVILY_SEARCH_DEPTH", "basic")
 
         # Normalize to list for uniform handling
         queries = [query] if isinstance(query, str) else query
@@ -219,6 +223,7 @@ class TavilySearchClient:
                     query=q,
                     max_results=max_results,
                     include_raw_content=include_raw_content,
+                    search_depth=search_depth,
                 )
                 for q in queries
             ),
@@ -234,6 +239,7 @@ class TavilySearchClient:
                     "queries": queries,
                     "max_results": max_results,
                     "include_raw_content": include_raw_content,
+                    "search_depth": search_depth,
                 },
                 f"{len(queries)} parallel queries",
             )

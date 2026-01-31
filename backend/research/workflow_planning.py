@@ -43,7 +43,8 @@ class InitialPlanningWorkflow(Workflow):
                 model_name = "gemini-2.0-flash"
         
         thinking_budget = int(os.getenv("PLANNING_THINKING_BUDGET", "0")) or None
-        self.llm = get_llm(model_name, thinking_budget=thinking_budget)
+        temperature = float(os.getenv("PLANNING_TEMPERATURE", "1.0"))
+        self.llm = get_llm(model_name, thinking_budget=thinking_budget, temperature=temperature)
         self.research_id = research_id
         self.logger = get_session_logger(research_id) if research_id else None
 
