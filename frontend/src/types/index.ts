@@ -70,6 +70,7 @@ export interface ResearchState {
     workers: Record<string, WorkerState>;
     plan: ResearchPlan;
     iteration_count: number;
+    total_cost: number;
     logs: string[];
 }
 
@@ -79,4 +80,5 @@ export interface ResearchSessionSummary {
     status: string;
     created_at: string;
     entities_count: number;
+    total_cost: number;
 }

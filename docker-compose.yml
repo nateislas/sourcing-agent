@@ -1,4 +1,22 @@
 services:
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
+      - POSTGRES_DB=${POSTGRES_DB:-research_db}
+    ports:
+      # Bind to localhost only for security (remove for production or use secrets)
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   worker:
     build: .
     volumes:
@@ -10,6 +28,9 @@ services:
       - PYTHONUNBUFFERED=1
     command: python backend/worker.py
     restart: always
+    depends_on:
+      db:
+        condition: service_healthy
 
   api:
     build: .
@@ -21,6 +42,9 @@ services:
       - .env
     command: uvicorn backend.api:app --host 0.0.0.0 --port 8000 --reload --reload-dir backend
     restart: always
+    depends_on:
+      db:
+        condition: service_healthy
 
   frontend:
     image: node:22-alpine

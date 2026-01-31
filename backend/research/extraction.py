@@ -3,17 +3,19 @@ Extraction logic for the Deep Research Application.
 Handles web content cleaning, link discovery, and structured entity extraction.
 """
 
-import os
 import io
+import os
 from datetime import datetime
 from urllib.parse import urljoin
-from typing import List, Optional
+
 from bs4 import BeautifulSoup
-from trafilatura import extract as trafilatura_extract
-from pydantic import BaseModel, Field, field_validator
 from llama_cloud import AsyncLlamaCloud
-from backend.research.state import EvidenceSnippet
+from pydantic import BaseModel, Field, field_validator
+from trafilatura import extract as trafilatura_extract
+
 from backend.research.logging_utils import get_session_logger, log_api_call
+from backend.research.pricing import calculate_crawling_cost
+from backend.research.state import EvidenceSnippet
 
 
 class AssetExtractionSchema(BaseModel):
@@ -44,7 +46,7 @@ CRITICAL: If the text only mentions generic classes or targets without naming a 
 compound with an identifier or proper name, DO NOT extract anything. Return empty.
 Only extract if you can identify a SPECIFIC asset with a name or code."""
     )
-    aliases: Optional[List[str]] = Field(
+    aliases: list[str] | None = Field(
         description="""Alternative names or codes for this SAME asset.
 Examples: 
 - ["compound 14k"] as alias for "YJZ5118"
@@ -52,35 +54,35 @@ Examples:
 Only include aliases that refer to the exact same therapeutic asset.""",
         default_factory=list,
     )
-    target: Optional[str] = Field(
+    target: str | None = Field(
         description="The biological target this asset acts on (e.g. CDK12, PARP, PD-1)",
         default=None,
     )
-    modality: Optional[str] = Field(
+    modality: str | None = Field(
         description="The type of therapy (e.g. Monoclonal antibody, Small molecule, PROTAC, ADC)",
         default=None,
     )
-    product_stage: Optional[str] = Field(
+    product_stage: str | None = Field(
         description="The current development stage (e.g. Phase 2, Preclinical, IND-enabling, Discovery)",
         default=None,
     )
-    indication: Optional[str] = Field(
+    indication: str | None = Field(
         description="The disease or condition being treated (e.g. TNBC, pancreatic cancer)",
         default=None,
     )
-    geography: Optional[str] = Field(
+    geography: str | None = Field(
         description="Geographic scope or location if specified (e.g. China, US, Europe)",
         default=None,
     )
-    owner: Optional[str] = Field(
+    owner: str | None = Field(
         description="Company or institution developing this asset (e.g. Insilico Medicine, Carrick Therapeutics)",
         default=None,
     )
-    trial_ids: Optional[List[str]] = Field(
+    trial_ids: list[str] | None = Field(
         description="NCT identifiers for associated clinical trials (e.g. NCT12345678)",
         default_factory=list,
     )
-    evidence_excerpt: Optional[str] = Field(
+    evidence_excerpt: str | None = Field(
         description="""A concise, verbatim excerpt from the text that mentions the asset identifier and provides evidence for its relevance or attributes (e.g., target, stage, owners). 
         CRITICAL: This MUST be a verbatim string from the source text to ensure the result is auditable.""",
         default=None,
@@ -114,14 +116,14 @@ class WebExtractor:
             return content or ""
         return html_or_markdown  # Already markdown or clean text
 
-    def discover_links(self, html: str, base_url: str) -> List[str]:
+    def discover_links(self, html: str, base_url: str) -> list[str]:
         """
         Identifies relevant hyperlinks for the personal queue.
         """
         soup = BeautifulSoup(html, "html.parser")
         links = []
         for a in soup.find_all("a", href=True):
-            href = a["href"]
+            href = str(a["href"])
             if href.startswith("#") or href.startswith("javascript:"):
                 continue
 
@@ -138,10 +140,9 @@ class LlamaExtractionClient:
     """
     Structured extraction using LlamaExtract.
     """
+    client: AsyncLlamaCloud | None
 
-    def __init__(
-        self, api_key: Optional[str] = None, research_id: Optional[str] = None
-    ):
+    def __init__(self, api_key: str | None = None, research_id: str | None = None):
         self.api_key = api_key or os.getenv("LLAMA_CLOUD_API_KEY")
         self.research_id = research_id or "default"
         if not self.api_key:
@@ -149,7 +150,7 @@ class LlamaExtractionClient:
             return
 
         self.client = AsyncLlamaCloud(api_key=self.api_key)
-        self.agent_id = None
+        self.agent_id: str | None = None
         self.logger = get_session_logger(self.research_id) if research_id else None
 
     async def close(self):
@@ -194,12 +195,12 @@ class LlamaExtractionClient:
 
     async def extract_structured_data(
         self, text_or_file_path: str
-    ) -> List[AssetExtractionSchema]:
+    ) -> tuple[list[AssetExtractionSchema], float]:
         """
-        Runs extraction and returns a list of AssetExtractionSchema objects.
+        Runs extraction and returns a list of AssetExtractionSchema objects and the cost.
         """
         if not self.client:
-            return []
+            return [], 0.0
 
         agent_id = await self._get_or_create_agent()
 
@@ -233,11 +234,29 @@ class LlamaExtractionClient:
         # LlamaExtract returns data as a dict matching the schema
         # If target is PER_DOC, it's one dict. If PER_PAGE/ROW, it's a list.
         data = result.data
+        extracted = []
         if isinstance(data, dict):
-            return [AssetExtractionSchema(**data)]
-        if isinstance(data, list):
-            return [AssetExtractionSchema(**item) for item in data]
-        return []
+            extracted = [AssetExtractionSchema.model_validate(data)]
+        elif isinstance(data, list):
+            extracted = [AssetExtractionSchema.model_validate(item) for item in data]
+
+        # Calculate cost
+        # LlamaCloud charges per page. For text, it's typically 1 page per ~3k chars or 1 page min.
+        # We can estimate pages based on # of results or just assume 1 if text.
+        # Ideally result has usage info.
+        pages = 1
+        # Simple heuristic: 1 page per 2000 chars if text, or 1 if file (TODO: check file size/pages)
+        if len(text_or_file_path) < 1000 and os.path.exists(text_or_file_path):
+            # It's a file path, assume PDF pages? Hard to know without opening.
+            # Let's assume 5 pages avg for PDF for now
+            pages = 5
+        elif len(text_or_file_path) > 1000:
+            # It's text
+            pages = max(1, len(text_or_file_path) // 3000)
+
+        cost = calculate_crawling_cost(pages)
+
+        return extracted, cost
 
 
 class EntityExtractor:
@@ -245,7 +264,7 @@ class EntityExtractor:
     Orchestrates extraction using LlamaExtract and fallbacks.
     """
 
-    def __init__(self, research_id: Optional[str] = None):
+    def __init__(self, research_id: str | None = None):
         self.llama_client = LlamaExtractionClient(research_id=research_id)
 
     async def close(self):
@@ -253,21 +272,23 @@ class EntityExtractor:
         await self.llama_client.close()
 
     async def extract_entities(
-        self, text: str, source_url: str, raw_html: Optional[str] = None
-    ) -> dict:
+        self, text: str, source_url: str, raw_html: str | None = None
+    ) -> tuple[dict, float]:
         """
-        Extracts structured drug data and returns entities and discovered links.
+        Extracts structured drug data and returns entities, discovered links, and cost.
         """
         entities = []
         links = []
 
         # 1. Structure Entity Extraction
-        structured_findings = await self.llama_client.extract_structured_data(text)
+        structured_findings, cost = await self.llama_client.extract_structured_data(
+            text
+        )
 
         for drug in structured_findings:
             # Use specific excerpt if provided by LLM, else fallback to slicing
             excerpt = drug.evidence_excerpt or (text[:500] if len(text) > 500 else text)
-            
+
             snippet = EvidenceSnippet(
                 source_url=source_url,
                 content=excerpt,
@@ -304,4 +325,4 @@ class EntityExtractor:
             web_extractor = WebExtractor()
             links = web_extractor.discover_links(raw_html, source_url)
 
-        return {"entities": entities, "links": links}
+        return {"entities": entities, "links": links}, cost

@@ -5,37 +5,40 @@ Manages the iterative research process, workers, and state aggregation.
 
 import os
 import re
-from typing import List, Optional, Union
+from typing import Any
 
 from llama_index.core.workflow import (
-    Workflow,
     Context,
     StartEvent,
     StopEvent,
+    Workflow,
     step,
 )
 
-from backend.research.state import ResearchState, WorkerState, Entity
+from backend.research import activities
 from backend.research.events import (
-    PlanCreatedEvent,
-    WorkerStartEvent,
-    WorkerResultEvent,
-    IterationCompleteEvent,
-    VerificationStartEvent,
-    VerifyEntityEvent,
-    VerificationResultEvent,
+    GapFilledEvent,
     GapFillEvent,
     GapFillingStartEvent,
-    GapFilledEvent,
+    IterationCompleteEvent,
+    PlanCreatedEvent,
+    VerificationResultEvent,
+    VerificationStartEvent,
+    VerifyEntityEvent,
+    WorkerResultEvent,
+    WorkerStartEvent,
 )
-from backend.research import activities
 from backend.research.logging_utils import get_session_logger
+from backend.research.state import Entity, ResearchState, WorkerState
 
 
 class DeepResearchWorkflow(Workflow):
     """
     Orchestrates the iterative research process.
     """
+
+    def __init__(self, timeout: int = 120, verbose: bool = True, **kwargs: Any):
+        super().__init__(timeout=timeout, verbose=verbose, **kwargs)
 
     @step
     async def start(self, ctx: Context, ev: StartEvent) -> PlanCreatedEvent:
@@ -62,6 +65,7 @@ class DeepResearchWorkflow(Workflow):
         # Generate Initial Plan (Agentic Step)
         plan = await activities.generate_initial_plan(topic, research_id=state.id)
         state.plan = plan
+        state.total_cost += plan.cost
         state.logs.append(f"Plan generated: {plan.current_hypothesis}")
 
         # Initialize workers from plan
@@ -71,7 +75,7 @@ class DeepResearchWorkflow(Workflow):
                 id=worker_cfg.worker_id,
                 research_id=state.id,
                 strategy=worker_cfg.strategy,
-                queries=worker_cfg.example_queries,  # Pass actual queries
+                queries=worker_cfg.example_queries,  # type: ignore
                 status="ACTIVE",
             )
             state.workers[w_state.id] = w_state
@@ -82,8 +86,8 @@ class DeepResearchWorkflow(Workflow):
 
     @step
     async def dispatch(
-        self, ctx: Context, ev: Union[PlanCreatedEvent, IterationCompleteEvent]
-    ) -> Optional[WorkerStartEvent]:
+        self, ctx: Context, ev: PlanCreatedEvent | IterationCompleteEvent
+    ) -> WorkerStartEvent | VerificationStartEvent | None:
         """
         Fan-Out: Dispatches work to all active workers.
         """
@@ -99,7 +103,9 @@ class DeepResearchWorkflow(Workflow):
         if not active_workers:
             # No viable workers left to dispatch. Transition to verification.
             state.status = "verification_pending"
-            state.logs.append("No active or productive workers remaining. Starting verification.")
+            state.logs.append(
+                "No active or productive workers remaining. Starting verification."
+            )
             await activities.save_state(state)
             return VerificationStartEvent()
 
@@ -130,12 +136,15 @@ class DeepResearchWorkflow(Workflow):
             status=result.get("status", "PRODUCTIVE"),
             extracted_data=result.get("extracted_data", []),
             discovered_links=result.get("discovered_links", []),
+            query_history=result.get("query_history", []),
+            search_engine_history=result.get("search_engine_history", []),
+            cost=result.get("cost", 0.0),
         )
 
     @step
     async def aggregate(
         self, ctx: Context, ev: WorkerResultEvent
-    ) -> Optional[Union[IterationCompleteEvent, StopEvent]]:
+    ) -> IterationCompleteEvent | StopEvent | VerificationStartEvent | None:
         """
         Fan-In: Aggregates results from all workers, checks stopping criteria, and updates plan.
         """
@@ -154,7 +163,7 @@ class DeepResearchWorkflow(Workflow):
             return None
 
         # All workers finished this iteration
-        worker_results: List[WorkerResultEvent] = events
+        worker_results: list[WorkerResultEvent] = events  # type: ignore
 
         # --- Critical Section: State Update ---
         # Update metrics and worker status based on results
@@ -169,23 +178,15 @@ class DeepResearchWorkflow(Workflow):
                 w_state.entities_found += res.entities_found
                 w_state.new_entities += res.new_entities
                 w_state.status = res.status
+                w_state.query_history = res.query_history
+                w_state.search_engine_history = res.search_engine_history
                 total_new_entities += res.new_entities
                 total_pages += res.pages_fetched
 
                 # Update Personal Queue
                 # 1. Remove consumed URLs (FIFO)
                 consumed_urls = getattr(res, "consumed_urls", [])
-                # Filter out consumed URLs from the personal queue
-                # Note: This simple filtering assumes unique URLs in queue or FIFO consistency.
-                # A more robust approach might be to pop N items if we knew exactly N were popped from the front.
-                # Given logic in activity: `url_queue.append(worker_state.personal_queue.pop(0))`,
-                # the activity effectively consumed the *head* of the queue passed to it.
-                # BUT: The activity operates on a *copy* of the state.
-                # So we simply need to remove the URLs that were in the queue.
 
-                # However, since `consumed_urls` includes both search results AND personal queue items,
-                # we should only remove those that were actually IN the personal queue.
-                # Optimization: Rebuild queue excluding consumed items.
                 if consumed_urls:
                     w_state.personal_queue = [
                         url
@@ -198,6 +199,8 @@ class DeepResearchWorkflow(Workflow):
                     if link not in state.visited_urls:
                         state.visited_urls.add(link)
                         w_state.personal_queue.append(link)
+
+            state.total_cost += getattr(res, "cost", 0.0)
 
             # Merge entities into global state
             for item in res.extracted_data:
@@ -213,7 +216,9 @@ class DeepResearchWorkflow(Workflow):
                     "indication": item.get("indication"),
                     "geography": item.get("geography"),
                     "owner": item.get("owner"),
-                    **item.get("attributes", {})  # Merge any other attributes if present
+                    **item.get(
+                        "attributes", {}
+                    ),  # Merge any other attributes if present
                 }
                 # Remove None values
                 attributes = {k: v for k, v in attributes.items() if v}
@@ -222,14 +227,18 @@ class DeepResearchWorkflow(Workflow):
                     state.known_entities[canonical] = Entity(
                         canonical_name=canonical,
                         mention_count=1,
-                        drug_class=attributes.get("modality"), # specific field on Entity
-                        clinical_phase=attributes.get("product_stage"), # specific field on Entity
-                        attributes=attributes # generic dict for everything else
+                        drug_class=attributes.get(
+                            "modality"
+                        ),  # specific field on Entity
+                        clinical_phase=attributes.get(
+                            "product_stage"
+                        ),  # specific field on Entity
+                        attributes=attributes,  # generic dict for everything else
                     )
                 else:
                     entity = state.known_entities[canonical]
                     entity.mention_count += 1
-                    
+
                     # Merge new attributes into existing
                     current_attrs = entity.attributes or {}
                     for k, v in attributes.items():
@@ -237,13 +246,19 @@ class DeepResearchWorkflow(Workflow):
                         if v and v != "Unknown":
                             if k not in current_attrs or current_attrs[k] == "Unknown":
                                 current_attrs[k] = v
-                    
+
                     entity.attributes = current_attrs
-                    
+
                     # Update specific fields if improved
-                    if attributes.get("modality") and attributes["modality"] != "Unknown":
+                    if (
+                        attributes.get("modality")
+                        and attributes["modality"] != "Unknown"
+                    ):
                         entity.drug_class = attributes["modality"]
-                    if attributes.get("product_stage") and attributes["product_stage"] != "Unknown":
+                    if (
+                        attributes.get("product_stage")
+                        and attributes["product_stage"] != "Unknown"
+                    ):
                         entity.clinical_phase = attributes["product_stage"]
 
                 # Add evidence and aliases
@@ -253,9 +268,7 @@ class DeepResearchWorkflow(Workflow):
 
         state.iteration_count += 1
         global_novelty = total_new_entities / max(total_pages, 1)
-        log_msg = (
-            "Iteration %s completed. Found %d new entities. Novelty Rate: %.2f entities/page"
-        )
+        log_msg = "Iteration %s completed. Found %d new entities. Novelty Rate: %.2f entities/page"
         state.logs.append(
             log_msg % (state.iteration_count, total_new_entities, global_novelty)
         )
@@ -303,6 +316,7 @@ class DeepResearchWorkflow(Workflow):
         # Call the agentic update logic to analyze discoveries and make strategic decisions
         new_plan = await activities.update_plan(state)
         state.plan = new_plan
+        state.total_cost += new_plan.cost
 
         # Handle worker kills
         for worker_id in new_plan.workers_to_kill:
@@ -320,7 +334,7 @@ class DeepResearchWorkflow(Workflow):
                     id=worker_cfg.worker_id,
                     research_id=state.id,
                     strategy=worker_cfg.strategy,
-                    queries=worker_cfg.example_queries,
+                    queries=worker_cfg.example_queries,  # type: ignore
                     status="ACTIVE",
                 )
                 state.workers[w_state.id] = w_state
@@ -331,7 +345,7 @@ class DeepResearchWorkflow(Workflow):
         # Update queries for existing workers
         for worker_id, new_queries in new_plan.updated_queries.items():
             if worker_id in state.workers:
-                state.workers[worker_id].queries = new_queries
+                state.workers[worker_id].queries = new_queries  # type: ignore
                 msg = f"Updated queries for worker {worker_id}: {len(new_queries)} new queries"
                 state.logs.append(msg)
                 logger.info(msg)
@@ -347,25 +361,31 @@ class DeepResearchWorkflow(Workflow):
     @step
     async def dispatch_verification(
         self, ctx: Context, ev: VerificationStartEvent
-    ) -> Optional[VerifyEntityEvent]:
+    ) -> VerifyEntityEvent | None:
         """
         Dispatches verification tasks for all known entities.
         """
         state: ResearchState = await ctx.store.get("state")
         logger = get_session_logger(state.id)
-        logger.info("Starting verification phase for %d entities.", len(state.known_entities))
-        state.logs.append(f"Starting verification phase for {len(state.known_entities)} entities.")
-        
+        logger.info(
+            "Starting verification phase for %d entities.", len(state.known_entities)
+        )
+        state.logs.append(
+            f"Starting verification phase for {len(state.known_entities)} entities."
+        )
+
         # Constraints from the plan
         constraints = state.plan.query_analysis
-        
+
         # Send event for each entity
         for entity in state.known_entities.values():
             # Only verify unverified or uncertain entities? For now, verify all.
             # Convert entity to dict for event payload
             entity_dict = entity.model_dump()
-            ctx.send_event(VerifyEntityEvent(entity=entity_dict, constraints=constraints))
-            
+            ctx.send_event(
+                VerifyEntityEvent(entity=entity_dict, constraints=constraints)
+            )
+
         return None
 
     @step(num_workers=10)
@@ -377,31 +397,31 @@ class DeepResearchWorkflow(Workflow):
         """
         # Call activity
         result = await activities.verify_entity(ev.entity, ev.constraints)
-        return VerificationResultEvent(result=result)
+        return VerificationResultEvent(result=result, cost=result.get("cost", 0.0))
 
     @step
     async def aggregate_verification(
         self, ctx: Context, ev: VerificationResultEvent
-    ) -> StopEvent:
+    ) -> StopEvent | GapFillingStartEvent | GapFillEvent | None:
         """
         Aggregates verification results and updates state.
         """
         state: ResearchState = await ctx.store.get("state")
         num_entities = len(state.known_entities)
-        
+
         # Wait for all verification results
         events = ctx.collect_events(ev, [VerificationResultEvent] * num_entities)
         if events is None:
             return None
-            
+
         logger = get_session_logger(state.id)
         logger.info("All verification tasks completed.")
-        
+
         # Update state with results
         verified_count = 0
         rejected_count = 0
         uncertain_count = 0
-        
+
         for res_ev in events:
             res = res_ev.result
             canonical = res.get("canonical_name")
@@ -410,7 +430,9 @@ class DeepResearchWorkflow(Workflow):
                 ent.verification_status = res.get("status", "UNCERTAIN")
                 ent.rejection_reason = res.get("rejection_reason")
                 ent.confidence_score = res.get("confidence", 0.0)
-                
+
+                state.total_cost += res_ev.cost
+
                 if ent.verification_status == "VERIFIED":
                     verified_count += 1
                 elif ent.verification_status == "REJECTED":
@@ -420,8 +442,10 @@ class DeepResearchWorkflow(Workflow):
 
         gap_events_dispatched = 0
         if uncertain_count > 0:
-            logger.info("Found %d uncertain entities. Triggering gap analysis.", uncertain_count)
-            
+            logger.info(
+                "Found %d uncertain entities. Triggering gap analysis.", uncertain_count
+            )
+
             # Identify gaps and dispatch events
             for res_ev in events:
                 res = res_ev.result
@@ -429,8 +453,8 @@ class DeepResearchWorkflow(Workflow):
                     ent_data = state.known_entities[res["canonical_name"]].model_dump()
                     queries = await activities.analyze_gaps(ent_data, res)
                     if queries:
-                       ctx.send_event(GapFillEvent(entity=ent_data, queries=queries))
-                       gap_events_dispatched += 1
+                        ctx.send_event(GapFillEvent(entity=ent_data, queries=queries))
+                        gap_events_dispatched += 1
 
         summary_msg = (
             f"Verification Complete: {verified_count} Verified, "
@@ -438,13 +462,13 @@ class DeepResearchWorkflow(Workflow):
         )
         state.logs.append(summary_msg)
         logger.info(summary_msg)
-        
+
         await activities.save_state(state)
-        
+
         if gap_events_dispatched > 0:
             logger.info("Dispatching %d gap-filling tasks.", gap_events_dispatched)
             return GapFillingStartEvent(count=gap_events_dispatched)
-        
+
         return StopEvent(result=state)
 
     @step
@@ -457,44 +481,53 @@ class DeepResearchWorkflow(Workflow):
         worker_id = f"gap-fill-{ev.entity.get('canonical_name')}"[:30]
         # Clean ID
         worker_id = re.sub(r"[^a-zA-Z0-9-]", "", worker_id)
-        
+
         state: ResearchState = await ctx.store.get("state")
-        
+
         # Configure a targeted worker
         worker = WorkerState(
             id=worker_id,
             research_id=state.id,
             strategy="gap_filling",
-            queries=ev.queries,
+            queries=list(ev.queries),  # Ensure queries is a list
             status="ACTIVE",
-            personal_queue=[], # Could seed with entity domains if known
+            personal_queue=[],  # Could seed with entity domains if known
         )
-        
+
         # Execute single iteration (search -> fetch -> extract)
         # We reuse the existing activity!
-        await activities.execute_worker_iteration(worker)
-        
-        return GapFilledEvent(worker_id=worker_id)
+        # Execute single iteration (search -> fetch -> extract)
+        # We reuse the existing activity!
+        result = await activities.execute_worker_iteration(worker)
+
+        return GapFilledEvent(worker_id=worker_id, cost=result.get("cost", 0.0))
 
     @step
-    async def await_gap_filling(self, ctx: Context, ev: GapFillingStartEvent) -> StopEvent:
+    async def await_gap_filling(
+        self, ctx: Context, ev: GapFillingStartEvent
+    ) -> StopEvent | None:
         """
         Waits for all gap-filling tasks to complete.
         """
         state: ResearchState = await ctx.store.get("state")
         logger = get_session_logger(state.id)
-        
+
         logger.info("Waiting for %d gap-filling tasks...", ev.count)
-        
+
         # Wait for all gap filled events
         # Note: We don't strictly need the results payload as execute_worker_iteration saves to DB side-effect
         events = ctx.collect_events(ev, [GapFilledEvent] * ev.count)
         if events is None:
             return None
-            
+
+        # Sum costs from gap filling
+        gap_events: list[GapFilledEvent] = events  # type: ignore
+        for gap_ev in gap_events:
+            state.total_cost += gap_ev.cost
+
         logger.info("All gap-filling tasks completed.")
         state.logs.append("Gap filling phase complete.")
         state.status = "completed"
-        
+
         await activities.save_state(state)
         return StopEvent(result=state)

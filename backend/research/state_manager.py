@@ -5,11 +5,12 @@ Handles deduplication of URLs and entities across distributed workers.
 
 import logging
 from abc import ABC, abstractmethod
-from typing import Optional
+
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
+
 from backend.db.connection import AsyncSessionLocal
-from backend.db.models import VisitedURL, EntityModel
+from backend.db.models import EntityModel, VisitedURL
 
 logger = logging.getLogger(__name__)
 
@@ -18,14 +19,12 @@ class StateManager(ABC):
     """Abstract base class for state management."""
 
     @abstractmethod
-    async def is_url_visited(self, url: str, research_id: Optional[str] = None) -> bool:
+    async def is_url_visited(self, url: str, research_id: str | None = None) -> bool:
         """Checks if a URL has already been visited."""
         pass
 
     @abstractmethod
-    async def mark_url_visited(
-        self, url: str, research_id: Optional[str] = None
-    ) -> bool:
+    async def mark_url_visited(self, url: str, research_id: str | None = None) -> bool:
         """
         Marks a URL as visited. Returns True if successfully marked,
         False if it was already visited (race condition caught).
@@ -39,7 +38,7 @@ class StateManager(ABC):
 
     @abstractmethod
     async def mark_entity_known(
-        self, canonical_name: str, attributes: Optional[dict] = None
+        self, canonical_name: str, attributes: dict | None = None
     ) -> bool:
         """
         Marks an entity as known. Returns True if successfully marked,
@@ -51,7 +50,7 @@ class StateManager(ABC):
 class DatabaseStateManager(StateManager):
     """Implementation of StateManager using the relational database."""
 
-    async def is_url_visited(self, url: str, research_id: Optional[str] = None) -> bool:
+    async def is_url_visited(self, url: str, research_id: str | None = None) -> bool:
         async with AsyncSessionLocal() as session:
             stmt = select(VisitedURL).where(VisitedURL.url == url)
             if research_id:
@@ -59,9 +58,7 @@ class DatabaseStateManager(StateManager):
             result = await session.execute(stmt)
             return result.scalar_one_or_none() is not None
 
-    async def mark_url_visited(
-        self, url: str, research_id: Optional[str] = None
-    ) -> bool:
+    async def mark_url_visited(self, url: str, research_id: str | None = None) -> bool:
         async with AsyncSessionLocal() as session:
             try:
                 # Check exist first to save exception overhead
@@ -87,16 +84,18 @@ class DatabaseStateManager(StateManager):
             return result.scalar_one_or_none() is not None
 
     async def mark_entity_known(
-        self, canonical_name: str, attributes: Optional[dict] = None
+        self, canonical_name: str, attributes: dict | None = None
     ) -> bool:
         """
-        Marks an entity as known. Returns True if it's a NEW entity, 
+        Marks an entity as known. Returns True if it's a NEW entity,
         False if it already existed (but may have updated its attributes).
         """
         async with AsyncSessionLocal() as session:
             try:
                 # 1. Check if it exists
-                stmt = select(EntityModel).where(EntityModel.canonical_name == canonical_name)
+                stmt = select(EntityModel).where(
+                    EntityModel.canonical_name == canonical_name
+                )
                 result = await session.execute(stmt)
                 existing = result.scalar_one_or_none()
 
@@ -108,10 +107,12 @@ class DatabaseStateManager(StateManager):
                         for k, v in attributes.items():
                             # Update if current value is missing, empty, or "Unknown"
                             current_val = new_attrs.get(k)
-                            if v and (not current_val or current_val == "Unknown" or current_val == ""):
+                            if v and (
+                                not current_val or current_val in {"Unknown", ""}
+                            ):
                                 new_attrs[k] = v
                                 updated = True
-                        
+
                         if updated:
                             existing.attributes = new_attrs
                             session.add(existing)
@@ -126,7 +127,7 @@ class DatabaseStateManager(StateManager):
                 await session.commit()
                 return True
             except IntegrityError:
-                # Race condition: someone else created it. 
+                # Race condition: someone else created it.
                 # We could retry the merge here, but for now we'll just return False.
                 await session.rollback()
                 return False

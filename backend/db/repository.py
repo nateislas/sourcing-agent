@@ -4,12 +4,13 @@ Handles conversion between Domain Models (Pydantic) and Persistence Models (SQLA
 """
 
 from typing import Optional
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.db.models import ResearchSessionHelper, EntityModel, EvidenceModel
-from backend.research.state import ResearchState, Entity, EvidenceSnippet
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from backend.db.models import EntityModel, EvidenceModel, ResearchSessionHelper
+from backend.research.state import Entity, EvidenceSnippet, ResearchState
 
 
 class ResearchRepository:
@@ -23,7 +24,7 @@ class ResearchRepository:
         """
         self.session = session
 
-    async def get_session(self, session_id: str) -> Optional[ResearchState]:
+    async def get_session(self, session_id: str) -> ResearchState | None:
         """
         Loads a ResearchState from the database for a specific session.
         Args:
@@ -31,7 +32,9 @@ class ResearchRepository:
         Returns:
             The loaded ResearchState or None if not found.
         """
-        stmt = select(ResearchSessionHelper).where(ResearchSessionHelper.session_id == session_id)
+        stmt = select(ResearchSessionHelper).where(
+            ResearchSessionHelper.session_id == session_id
+        )
         result = await self.session.execute(stmt)
         db_obj = result.scalar_one_or_none()
 
@@ -43,7 +46,7 @@ class ResearchRepository:
             return ResearchState.model_validate(db_obj.state_dump)
 
         # Fallback for old records without state_dump
-        return ResearchState(topic=db_obj.topic, status=db_obj.status, logs=db_obj.logs)
+        return ResearchState(topic=db_obj.topic, status=db_obj.status, logs=db_obj.logs)  # type: ignore
 
     async def list_sessions(self, limit: int = 10) -> list[dict]:
         """
@@ -59,11 +62,14 @@ class ResearchRepository:
         return [
             {
                 "session_id": s.session_id,
+                "total_cost": s.total_cost,
                 "topic": s.topic,
                 "status": s.status,
                 "created_at": s.created_at,
                 "updated_at": s.updated_at,
-                "entities_count": len(s.state_dump.get("known_entities", {})) if s.state_dump else 0
+                "entities_count": len(s.state_dump.get("known_entities", {}))
+                if s.state_dump
+                else 0,
             }
             for s in sessions
         ]
@@ -84,6 +90,7 @@ class ResearchRepository:
             existing.topic = state.topic
             existing.status = state.status
             existing.logs = state.logs
+            existing.total_cost = state.total_cost
             existing.state_dump = state.model_dump(mode="json")
         else:
             db_obj = ResearchSessionHelper(
@@ -91,6 +98,7 @@ class ResearchRepository:
                 topic=state.topic,
                 status=state.status,
                 logs=state.logs,
+                total_cost=state.total_cost,
                 state_dump=state.model_dump(mode="json"),
             )
             self.session.add(db_obj)
@@ -122,10 +130,10 @@ class ResearchRepository:
             existing.attributes = entity.attributes
             existing.aliases = list(entity.aliases)
             existing.mention_count = entity.mention_count
-            
+
             # Update verification status
-            existing.verification_status = entity.verification_status
-            existing.rejection_reason = entity.rejection_reason
+            existing.verification_status = entity.verification_status  # type: ignore
+            existing.rejection_reason = entity.rejection_reason  # type: ignore
             existing.confidence_score = entity.confidence_score
 
             # Append ONLY new evidence
@@ -207,7 +215,6 @@ class ResearchRepository:
             attributes=db_obj.attributes,
             mention_count=db_obj.mention_count,
             evidence=evidence,
-            verification_status=db_obj.verification_status,
-            rejection_reason=db_obj.rejection_reason,
             confidence_score=db_obj.confidence_score,
+            verification_status=db_obj.verification_status,  # type: ignore
         )

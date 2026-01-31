@@ -4,10 +4,11 @@ Loads environment variables, initializes the database, and executes the research
 """
 
 import asyncio
+import os
 import re
 import sys
-import os
 import warnings
+
 from dotenv import load_dotenv
 
 # Suppress warnings
@@ -25,8 +26,9 @@ load_dotenv()
 
 import logging
 from datetime import datetime
-from backend.research.orchestrator import DeepResearchWorkflow
+
 from backend.db.init_db import init_db
+from backend.research.orchestrator import DeepResearchWorkflow
 from scripts.export_results import export_to_csv
 
 

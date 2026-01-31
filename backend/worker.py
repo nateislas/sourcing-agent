@@ -5,20 +5,22 @@ Registers the workflows and activities and connects to the Temporal cluster.
 
 import asyncio
 import os
+
 from temporalio.client import Client, TLSConfig
-from temporalio.worker import Worker
 from temporalio.contrib.pydantic import pydantic_data_converter
-from backend.config import TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE, TASK_QUEUE
-from backend.research.workflows import DeepResearchOrchestrator
-from backend.research.activities import (
-    generate_initial_plan,
-    execute_worker_iteration,
-    update_plan,
-    save_state,
-    verify_entity,
-    analyze_gaps,
-)
+from temporalio.worker import Worker
+
+from backend.config import TASK_QUEUE, TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE
 from backend.db.init_db import init_db
+from backend.research.activities import (
+    analyze_gaps,
+    execute_worker_iteration,
+    generate_initial_plan,
+    save_state,
+    update_plan,
+    verify_entity,
+)
+from backend.research.workflows import DeepResearchOrchestrator
 
 
 async def main():
@@ -43,7 +45,7 @@ async def main():
         TEMPORAL_ADDRESS,
         namespace=TEMPORAL_NAMESPACE,
         api_key=api_key,
-        tls=tls_config,
+        tls=tls_config or False,
         data_converter=pydantic_data_converter,
     )
 

@@ -4,8 +4,9 @@ Script to export discovered entities and evidence from the database to a CSV fil
 
 import asyncio
 import csv
-import sys
 import os
+import sys
+
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 

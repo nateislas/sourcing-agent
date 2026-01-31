@@ -3,18 +3,21 @@ LlamaIndex Workflow for Initial Research Planning.
 """
 
 import json
+
 from llama_index.core.workflow import (
-    Workflow,
     StartEvent,
     StopEvent,
+    Workflow,
     step,
 )
 
-# ResearchPlan now contains InitialWorkerStrategy
-from backend.research.state import ResearchPlan, InitialWorkerStrategy
 from backend.research.llm import get_llm
 from backend.research.logging_utils import get_session_logger, log_api_call
+from backend.research.pricing import calculate_llm_cost
 from backend.research.prompts import INITIAL_PLANNING_PROMPT
+
+# ResearchPlan now contains InitialWorkerStrategy
+from backend.research.state import InitialWorkerStrategy, ResearchPlan
 
 
 class InitialPlanningWorkflow(Workflow):
@@ -28,7 +31,7 @@ class InitialPlanningWorkflow(Workflow):
         model_name: str = "models/gemini-3-flash-preview",
         timeout: int = 60,
         verbose: bool = False,
-        research_id: str = None,
+        research_id: str | None = None,
     ):
         super().__init__(timeout=timeout, verbose=verbose)
         self.llm = get_llm(model_name)
@@ -59,6 +62,29 @@ class InitialPlanningWorkflow(Workflow):
                 response.text,
             )
 
+        # Calculate cost (do this before parsing to ensure it's captured even on errors)
+        cost = 0.0
+        try:
+            # Estimate or extract usage
+            # Google GenAI response typically has usages in raw
+            input_tokens = 0
+            output_tokens = 0
+            if hasattr(response, "raw") and isinstance(response.raw, dict):
+                usage = response.raw.get("usageMetadata", {})
+                input_tokens = usage.get("promptTokenCount", 0)
+                output_tokens = usage.get("candidatesTokenCount", 0)
+
+            if input_tokens == 0:
+                input_tokens = len(prompt_str) // 4
+                output_tokens = len(response.text) // 4
+
+            cost = calculate_llm_cost(self.llm.model, input_tokens, output_tokens)
+        except Exception:
+            # Fallback to rough estimate
+            cost = calculate_llm_cost(
+                self.llm.model, len(prompt_str) // 4, len(response.text) // 4
+            )
+
         try:
             # Parse JSON
             text = response.text.replace("```json", "").replace("```", "").strip()
@@ -83,6 +109,7 @@ class InitialPlanningWorkflow(Workflow):
                 current_hypothesis=f"Planning for {topic}",
                 findings_summary="Expert planning executed successfully.",
                 next_steps=[w.strategy_description for w in workers],
+                cost=cost,
             )
 
             return StopEvent(result=plan)
@@ -94,7 +121,7 @@ class InitialPlanningWorkflow(Workflow):
             AttributeError,
             TypeError,
         ) as e:
-            # Fallback Plan
+            # Fallback Plan (preserve cost calculation)
             if self.logger:
                 self.logger.error("Planning failed: %s", e)
 
@@ -114,5 +141,6 @@ class InitialPlanningWorkflow(Workflow):
                 reasoning="Fallback due to JSON parsing error in planning.",
                 current_hypothesis="Fallback Plan",
                 findings_summary=f"Error parsing plan: {e}",
+                cost=cost,  # Include cost even in fallback
             )
             return StopEvent(result=fallback_plan)

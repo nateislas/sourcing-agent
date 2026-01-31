@@ -4,19 +4,20 @@ Checks that multiple saves of the same entity with new evidence append correctly
 """
 
 import asyncio
-import sys
-import os
-from datetime import datetime
 import csv
+import os
+import sys
+from datetime import datetime
+
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 # Add project root to sys.path
 sys.path.append(os.getcwd())
 
-from backend.db.init_db import init_db
 from backend.db.connection import AsyncSessionLocal
-from backend.db.models import EntityModel, EvidenceModel
+from backend.db.init_db import init_db
+from backend.db.models import EntityModel
 from backend.db.repository import ResearchRepository
 from backend.research.state import Entity, EvidenceSnippet
 
@@ -97,7 +98,7 @@ async def main():
 
     # 5. Check CSV
     print("Checking CSV...")
-    with open(OUTPUT_FILE, "r") as f:
+    with open(OUTPUT_FILE) as f:
         reader = csv.DictReader(f)
         found = False
         for row in reader:

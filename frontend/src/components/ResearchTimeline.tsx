@@ -1,8 +1,9 @@
 import React from 'react';
 import { CheckCircle2, Clock, Search, ShieldCheck, Flag, AlertCircle } from 'lucide-react';
+import type { ResearchState } from '../types';
 
 interface Props {
-    status: "initialized" | "running" | "verification_pending" | "completed" | "failed";
+    status: ResearchState['status'];
     iteration: number;
 }
 
@@ -82,10 +83,10 @@ export const ResearchTimeline: React.FC<Props> = ({ status, iteration }) => {
 
                         {/* Node */}
                         <div className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-500 border-2 z-10 relative bg-card ${stage.isActive
-                                ? 'bg-primary text-primary-foreground border-primary shadow-[0_0_15px_rgba(var(--primary),0.3)]'
-                                : stage.isDone
-                                    ? 'bg-green-50 text-green-600 border-green-200'
-                                    : 'bg-card text-muted-foreground border-border'
+                            ? 'bg-primary text-primary-foreground border-primary shadow-[0_0_15px_rgba(var(--primary),0.3)]'
+                            : stage.isDone
+                                ? 'bg-green-50 text-green-600 border-green-200'
+                                : 'bg-card text-muted-foreground border-border'
                             }`}>
                             {stage.isDone ? (
                                 <CheckCircle2 className="w-5 h-5" />

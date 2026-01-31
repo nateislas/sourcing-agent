@@ -3,23 +3,24 @@ Research Agent (The "Brain").
 Handles the intelligent planning and decision making logic using LLMs.
 """
 
-import os
 import json
 import logging
-from typing import Optional
+import os
 
 from llama_index.core.base.llms.types import ChatMessage
+
+from backend.research.llm_factory import get_llm
+from backend.research.logging_utils import get_session_logger, log_api_call
+from backend.research.pricing import calculate_llm_cost
+from backend.research.prompts import ADAPTIVE_PLANNING_PROMPT
 from backend.research.state import (
+    Gap,
+    InitialWorkerStrategy,
     ResearchPlan,
     ResearchState,
-    InitialWorkerStrategy,
-    Gap,
     safe_uuid4,
 )
 from backend.research.workflow_planning import InitialPlanningWorkflow
-from backend.research.llm_factory import get_llm
-from backend.research.prompts import ADAPTIVE_PLANNING_PROMPT
-from backend.research.logging_utils import get_session_logger, log_api_call
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +33,8 @@ class ResearchAgent:
 
     def __init__(
         self,
-        model_name: Optional[str] = None,
-        timeout: Optional[int] = None,
+        model_name: str | None = None,
+        timeout: int | None = None,
     ):
         self.model_name = model_name or os.getenv(
             "RESEARCH_MODEL", "models/gemini-3-flash-preview"
@@ -41,7 +42,7 @@ class ResearchAgent:
         self.timeout = timeout or int(os.getenv("RESEARCH_TIMEOUT", "60"))
 
     async def generate_initial_plan(
-        self, topic: str, research_id: Optional[str] = None
+        self, topic: str, research_id: str | None = None
     ) -> ResearchPlan:
         """
         Generates the initial research plan using the planning workflow.
@@ -50,7 +51,7 @@ class ResearchAgent:
 
         # Setup workflow with research_id for logging
         planning_workflow = InitialPlanningWorkflow(
-            model_name=self.model_name,
+            model_name=self.model_name or "models/gemini-2.0-flash-exp",
             timeout=self.timeout,
             verbose=True,
             research_id=research_id,
@@ -146,6 +147,25 @@ class ResearchAgent:
             response = await llm.achat(messages)
             response_text = response.message.content
 
+            # Calculate cost
+            cost = 0.0
+            try:
+                # Estimate or extract usage
+                input_tokens = 0
+                output_tokens = 0
+                if hasattr(response, "raw") and isinstance(response.raw, dict):
+                    usage = response.raw.get("usageMetadata", {})
+                    input_tokens = usage.get("promptTokenCount", 0)
+                    output_tokens = usage.get("candidatesTokenCount", 0)
+
+                if input_tokens == 0:
+                    input_tokens = len(prompt) // 4
+                    output_tokens = len(response_text) // 4
+
+                cost = calculate_llm_cost(self.model_name or "default", input_tokens, output_tokens)
+            except Exception:
+                cost = 0.0
+
             # Extract JSON from response (robust brace-balancing)
             start_idx = response_text.find("```json")
             if start_idx != -1:
@@ -181,6 +201,7 @@ class ResearchAgent:
 
             # Update existing plan with adaptive decisions
             updated_plan = state.plan
+            updated_plan.cost = cost
             decisions = adaptive_plan.get("decisions", {})
 
             # Add new workers from spawn decisions

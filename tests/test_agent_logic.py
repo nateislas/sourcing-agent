@@ -2,8 +2,10 @@
 Unit tests for the ResearchAgent logic using LlamaIndex Workflows.
 """
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+
 from backend.research.agent import ResearchAgent
 from backend.research.state import ResearchPlan
 
