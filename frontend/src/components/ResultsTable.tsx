@@ -9,8 +9,24 @@ interface Props {
 
 export const ResultsTable: React.FC<Props> = ({ entities }) => {
     const [selectedEntity, setSelectedEntity] = React.useState<Entity | null>(null);
+    const statusPriority: Record<string, number> = {
+        'VERIFIED': 0,
+        'UNVERIFIED': 1,
+        'UNCERTAIN': 2,
+        'REJECTED': 3
+    };
+
     const entityList = React.useMemo(() =>
-        Object.values(entities).sort((a, b) => b.mention_count - a.mention_count),
+        Object.values(entities).sort((a, b) => {
+            const priorityA = statusPriority[a.verification_status] ?? 99;
+            const priorityB = statusPriority[b.verification_status] ?? 99;
+
+            if (priorityA !== priorityB) {
+                return priorityA - priorityB;
+            }
+
+            return b.mention_count - a.mention_count;
+        }),
         [entities]);
 
     if (entityList.length === 0) {
@@ -129,13 +145,13 @@ export const ResultsTable: React.FC<Props> = ({ entities }) => {
                                 {/* Status */}
                                 <td className="px-6 py-4">
                                     <div className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg border text-[10px] font-bold tracking-tight ${entity.verification_status === 'VERIFIED'
-                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
-                                            : entity.verification_status === 'REJECTED'
-                                                ? 'bg-rose-50 text-rose-700 border-rose-100'
-                                                : 'bg-amber-50 text-amber-700 border-amber-100'
+                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                                        : entity.verification_status === 'REJECTED'
+                                            ? 'bg-rose-50 text-rose-700 border-rose-100'
+                                            : 'bg-amber-50 text-amber-700 border-amber-100'
                                         }`}>
                                         {entity.verification_status === 'VERIFIED' && <CheckCircle2 className="w-3.5 h-3.5" />}
-                                        {entity.verification_status === 'UNVERIFIED' && <HelpCircle className="w-3.5 h-3.5" />}
+                                        {(entity.verification_status === 'UNVERIFIED' || entity.verification_status === 'UNCERTAIN') && <HelpCircle className="w-3.5 h-3.5" />}
                                         {entity.verification_status === 'REJECTED' && <XCircle className="w-3.5 h-3.5" />}
                                         {entity.verification_status}
                                     </div>
