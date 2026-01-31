@@ -130,6 +130,17 @@ class ResearchRepository:
         # Check dialect to decide on upsert strategy
         bind = self.session.get_bind()
         
+        # Prepare entity data
+        entity_data = {
+            "canonical_name": entity.canonical_name,
+            "aliases": list(entity.aliases),
+            "attributes": entity.attributes,
+            "mention_count": entity.mention_count,
+            "verification_status": entity.verification_status,
+            "rejection_reason": entity.rejection_reason,
+            "confidence_score": entity.confidence_score,
+        }
+
         if bind.dialect.name == "postgresql":
             # PostgreSQL-specific upsert
             stmt = postgresql_insert(EntityModel).values(**entity_data)

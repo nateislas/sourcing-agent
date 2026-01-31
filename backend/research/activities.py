@@ -324,8 +324,9 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
                         entities_from_this_url_canonical_names.append(canonical)
                         
                         # mark_entity_known likely expects dict with "canonical" key based on usage elsewhere
+                        # Update: mark_entity_known in RedisStateManager expects a string for canonical_name.
                         entity_mark_tasks.append(state_manager.mark_entity_known(
-                            normalized_entry
+                            canonical
                         ))
                     
                     # --- Parallel Entity Marking ---

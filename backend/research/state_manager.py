@@ -64,11 +64,7 @@ class DatabaseStateManager(StateManager):
             try:
                 # Use ON CONFLICT DO NOTHING to avoid "duplicate key value" errors in logs
                 stmt = insert(VisitedURL).values(url=url, research_id=research_id)
-                # Ensure we handle checking unique constraint on (url, research_id) if defined
-                # If only url is unique in DB schema, this might fail if same URL used in diff research
-                # Assuming schema allows (url, research_id) uniqueness or we want per-research scope.
-                # User request suggests updating this call implies we want per-research scope.
-                stmt = stmt.on_conflict_do_nothing(index_elements=["url", "research_id"])
+                stmt = stmt.on_conflict_do_nothing(index_elements=["url"])
                 result = await session.execute(stmt)
                 await session.commit()
                 # rowcount is 1 if inserted, 0 if conflict
