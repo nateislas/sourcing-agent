@@ -5,20 +5,69 @@ Provides a configured LlamaIndex Google GenAI instance.
 
 import os
 from typing import Any
+import logging
 
 from llama_index.core.program import LLMTextCompletionProgram
 from llama_index.llms.google_genai import GoogleGenAI
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+)
+from google.api_core.exceptions import ResourceExhausted, ServerError
 
 from backend.research.pricing import calculate_llm_cost
+
+logger = logging.getLogger(__name__)
+
+
+class LLMHandler:
+    """Wrapper for GoogleGenAI to add retries on rate limits and server overloads."""
+    def __init__(self, llm: GoogleGenAI):
+        self.llm = llm
+
+    @property
+    def model(self):
+        return self.llm.model
+
+    @retry(
+        retry=retry_if_exception_type((ResourceExhausted, ServerError)),
+        wait=wait_exponential(multiplier=1, min=4, max=20),
+        stop=stop_after_attempt(5),
+        before_sleep=lambda retry_state: logger.warning(
+            f"LLM Error during acomplete: {retry_state.outcome.exception()}. Retrying in {retry_state.next_action.sleep}s... (Attempt {retry_state.attempt_number})"
+        ),
+    )
+    async def acomplete(self, *args, **kwargs):
+        return await self.llm.acomplete(*args, **kwargs)
+
+    @retry(
+        retry=retry_if_exception_type((ResourceExhausted, ServerError)),
+        wait=wait_exponential(multiplier=1, min=4, max=20),
+        stop=stop_after_attempt(5),
+        before_sleep=lambda retry_state: logger.warning(
+            f"LLM Error during achat: {retry_state.outcome.exception()}. Retrying in {retry_state.next_action.sleep}s... (Attempt {retry_state.attempt_number})"
+        ),
+    )
+    async def achat(self, *args, **kwargs):
+        return await self.llm.achat(*args, **kwargs)
+
+    def __getattr__(self, name):
+        """Proxy all other attributes to the underlying LLM."""
+        return getattr(self.llm, name)
 
 
 def get_llm(model_name: str | None = None):
     """
-    Returns a configured LlamaIndex Google GenAI instance.
+    Returns a configured LLMHandler instance (wrapped GoogleGenAI).
     The API key is retrieved from GEMINI_API_KEY or GOOGLE_API_KEY environment variables.
     """
     if model_name is None:
-        model_name = os.getenv("DEFAULT_LLM_MODEL", "gemini-1.5-flash")
+        model_name = os.getenv("DEFAULT_LLM_MODEL")
+        if not model_name:
+             logger.warning("DEFAULT_LLM_MODEL not set in .env. Falling back to gemini-2.0-flash.")
+             model_name = "gemini-2.0-flash"
 
     api_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not api_key:
@@ -26,12 +75,17 @@ def get_llm(model_name: str | None = None):
             "GEMINI_API_KEY or GOOGLE_API_KEY is not set in the environment"
         )
 
-    # Map friendly names to Gemini API model names if needed
-    api_model_name = model_name
-    if not model_name.startswith("models/"):
-        api_model_name = f"models/{model_name}"
+    # Standardize model name: ensure it starts with models/ if it doesn't already,
+    # but don't double prefix if it already has it.
+    if model_name:
+        if not (model_name.startswith("models/") or model_name.startswith("tunedModels/")):
+            model_name = f"models/{model_name}"
+    else:
+        # Fallback if both model_name and env are missing
+        model_name = "models/gemini-2.0-flash"
 
-    return GoogleGenAI(model=api_model_name, api_key=api_key)
+    llm = GoogleGenAI(model=model_name, api_key=api_key)
+    return LLMHandler(llm)
 
 
 class LLMClient:
@@ -42,7 +96,10 @@ class LLMClient:
 
     def __init__(self, model_name: str | None = None):
         if model_name is None:
-            model_name = os.getenv("DEFAULT_LLM_MODEL", "gemini-2.5-flash-lite")
+            model_name = os.getenv("DEFAULT_LLM_MODEL")
+            if not model_name:
+                logger.warning("DEFAULT_LLM_MODEL not set in .env. Falling back to gemini-2.0-flash.")
+                model_name = "gemini-2.0-flash"
         self.llm = get_llm(model_name)
 
     async def generate(
@@ -65,13 +122,6 @@ class LLMClient:
                     llm=self.llm,
                     prompt_template_str="{prompt}",
                 )
-                # LLMTextCompletionProgram doesn't easily expose raw response/usage
-                # We'll estimate based on prompt length and result length?
-                # Or try to inspect the last response if cached?
-                # For now, let's just make a simple estimate or 0 if we can't get it.
-                # Actually, program.acall returns the Pydantic object, not the response.
-                # We could wrap the LLM to capture the last call, but that's complex.
-                # Let's assume 0 for structured output for now unless we refactor.
                 result = await program.acall(prompt=prompt)
 
                 # Estimate tokens
@@ -87,7 +137,6 @@ class LLMClient:
             response = await self.llm.acomplete(prompt)
 
             # Extract token usage from Google GenAI response
-            # Format: response.raw['usageMetadata'] = {'promptTokenCount': 123, 'candidatesTokenCount': 456, ...}
             input_tokens = 0
             output_tokens = 0
             try:

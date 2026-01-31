@@ -105,9 +105,19 @@ class ResearchRepository:
 
         await self.session.commit()
 
-        # Update relational tables for Entities and Evidence
-        for entity in state.known_entities.values():
-            await self.save_entity(entity)
+        await self.session.commit()
+
+        # OPTIMIZATION: We no longer save all entities here.
+        # Entities are now saved incrementally by the workers as they are discovered.
+        # This prevents O(N) DB writes on every state save.
+        
+    async def save_entities_batch(self, entities: list[Entity]):
+        """
+        Saves a batch of entities. 
+        Intended to be called with *newly discovered* entities from a worker iteration.
+        """
+        for entity in entities:
+             await self.save_entity(entity)
 
     async def save_entity(self, entity: Entity):
         """
@@ -168,15 +178,19 @@ class ResearchRepository:
             # Using relationship on new object:
 
             db_evidence_list = []
+            seen_signatures = set()
             for ev in entity.evidence:
-                db_ev = EvidenceModel(
-                    entity_name=entity.canonical_name,
-                    source_url=ev.source_url,
-                    content=ev.content,
-                    timestamp=ev.timestamp,
-                )
-                db_evidence_list.append(db_ev)
-
+                signature = (ev.source_url, ev.content)
+                if signature not in seen_signatures:
+                    db_ev = EvidenceModel(
+                        entity_name=entity.canonical_name,
+                        source_url=ev.source_url,
+                        content=ev.content,
+                        timestamp=ev.timestamp,
+                    )
+                    db_evidence_list.append(db_ev)
+                    seen_signatures.add(signature)
+            
             db_entity.evidence = db_evidence_list
 
         await self.session.commit()

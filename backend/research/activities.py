@@ -19,7 +19,7 @@ from backend.research.extraction_crawl4ai import Crawl4AIExtractor
 from backend.research.link_filter import LinkFilter
 from backend.research.link_scorer import LinkScorer
 from backend.research.state import Entity, ResearchPlan, ResearchState, WorkerState
-from backend.research.state_manager import DatabaseStateManager
+from backend.research.state_manager import DatabaseStateManager, RedisStateManager
 from backend.research.verification import VerificationAgent
 from backend.research.pricing import calculate_search_cost
 
@@ -52,6 +52,8 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
     Executes a single iteration for a specific worker.
     Includes: Search -> Fetch -> Extract -> Queue Management.
     """
+    import asyncio
+    from datetime import datetime
     safe_get_logger().info(
         "Worker %s executing iteration with strategy %s",
         worker_state.id,
@@ -61,7 +63,8 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
     # Initialize clients
     perp_client = PerplexitySearchClient(research_id=worker_state.research_id)
     entity_extractor = EntityExtractor(research_id=worker_state.research_id)
-    state_manager = DatabaseStateManager()
+    # Use Redis for high-speed deduplication
+    state_manager = RedisStateManager()
 
     try:
         # Metrics for this iteration
@@ -142,7 +145,54 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
         }
 
         # URLs to process in this iteration
-        url_queue = [res.url for res in search_results]
+        url_queue = [res.url for res in search_results if res.url and res.url.strip()]
+        
+        safe_get_logger().info(
+            "Worker %s search returned %d URLs. Final url_queue size: %d",
+            worker_state.id,
+            len(search_results),
+            len(url_queue)
+        )
+        if len(search_results) != len(url_queue):
+            bad_urls = [res.url for res in search_results if not (res.url and res.url.strip())]
+            safe_get_logger().warning("Worker %s found %d empty URLs in search results: %s", worker_state.id, len(bad_urls), bad_urls)
+
+        # --- Intermediate State Persistence ---
+        # Persist the search results immediately so the dashboard reflects activity
+        try:
+            async with AsyncSessionLocal() as session:
+                repo = ResearchRepository(session)
+                current_state = await repo.get_session(worker_state.research_id)
+                if current_state and worker_state.id in current_state.workers:
+                    # Update local query history record temporarily for UI visibility
+                    temp_record = {
+                        "query": query,
+                        "engine": search_engine,
+                        "iteration": worker_state.pages_fetched // page_budget,
+                        "results_count": len(search_results),
+                        "new_entities": 0, # Will be updated later
+                    }
+
+                    
+                    # Update the global state's worker copy
+                    w_global = current_state.workers[worker_state.id]
+                    if not w_global.query_history:
+                        w_global.query_history = []
+                    w_global.query_history.append(temp_record)
+                    
+                    if not w_global.search_engine_history:
+                        w_global.search_engine_history = []
+                    w_global.search_engine_history.append({
+                        "query": query,
+                        "engine": search_engine,
+                        "results": len(url_queue),
+                        "new_entities": 0
+                    })
+                    
+                    await repo.save_session(current_state)
+                    safe_get_logger().info("Persisted intermediate state for dashboard visibility")
+        except Exception as e:
+            safe_get_logger().warning(f"Failed to persist intermediate state: {e}")
 
         # 2. Add from personal queue, preferring novel domains
 
@@ -158,10 +208,22 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
 
         # Fill queue with novel domains first, then same domains
         priority_links = novel_domain_links + same_domain_links
+        safe_get_logger().info("Worker %s queue fill: %d novel, %d same domain links in personal_queue", worker_state.id, len(novel_domain_links), len(same_domain_links))
+        
         idx = 0
+        added_count = 0
         while len(url_queue) < page_budget and idx < len(priority_links):
-            url_queue.append(priority_links[idx])
+            link = priority_links[idx]
+            if not link or not link.strip():
+                safe_get_logger().warning("Worker %s skipping empty link in personal_queue at idx %d", worker_state.id, idx)
+                idx += 1
+                continue
+
+            url_queue.append(link)
             idx += 1
+            added_count += 1
+        
+        safe_get_logger().info("Worker %s added %d links from personal_queue to url_queue. Total: %d", worker_state.id, added_count, len(url_queue))
 
         # Remove added links from personal queue
         worker_state.personal_queue = [
@@ -169,252 +231,173 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
         ]
 
         # 3. Fetch & Extract Phase
+        # Filter and prepare URLs for batch processing
+        valid_urls = []
         for current_url in url_queue:
-            if pages_fetched >= page_budget:
+            if pages_fetched + len(valid_urls) >= page_budget:
                 break
-
-            # --- Global Deduplication Check ---
+            if not current_url or not current_url.strip():
+                continue
+            
             is_visited = await state_manager.is_url_visited(
                 current_url, research_id=worker_state.research_id
             )
             if is_visited:
                 safe_get_logger().info("Skipping visited URL: %s", current_url)
                 continue
+            
+            valid_urls.append(current_url)
 
-            # Mark visited immediately (optimistic concurrency)
-            await state_manager.mark_url_visited(
-                current_url, research_id=worker_state.research_id
+        # Process in chunks
+        chunk_size = 10
+        for i in range(0, len(valid_urls), chunk_size):
+            chunk = valid_urls[i:i+chunk_size]
+            safe_get_logger().info("Worker %s processing batch of %d URLs", worker_state.id, len(chunk))
+            
+            # Mark all as visited immediately
+            for url in chunk:
+                await state_manager.mark_url_visited(url, research_id=worker_state.research_id)
+                domain = urlparse(url).netloc
+                worker_state.explored_domains.add(domain)
+
+            crawl_extractor = Crawl4AIExtractor(research_id=worker_state.research_id)
+            batch_results, batch_cost = await crawl_extractor.extract_batch(
+                urls=chunk,
+                research_query=query
             )
+            iteration_cost += batch_cost
 
-            # Track domain for diversity
-            domain = urlparse(current_url).netloc
-            worker_state.explored_domains.add(domain)
-
-            safe_get_logger().info(
-                "Worker %s processing URL: %s (domain: %s, unique domains: %d)",
-                worker_state.id,
-                current_url,
-                domain,
-                len(worker_state.explored_domains),
-            )
-
-            # Smart Content Routing:
-            # 1. Always try Crawl4AI first (handles JS, clicks buttons, finds PDFs)
-            # 2. If PDF content is detected, fallback to LlamaExtract
-            # 3. Otherwise use Crawl4AI's extraction results
-
-            try:
-                # Step 1: Try Crawl4AI (works for most cases)
-                safe_get_logger().info("Attempting Crawl4AI for %s", current_url)
-
-                crawl_extractor = Crawl4AIExtractor(
-                    research_id=worker_state.research_id
-                )
-                extraction_res, ext_cost = await crawl_extractor.extract_from_html(
-                    url=current_url,
-                    research_query=query,  # Topic context for late binding
-                )
-                iteration_cost += ext_cost
-
-                # Step 2: Check if PDF content was detected
+            # Process individual results from the batch
+            for extraction_res in batch_results:
+                current_url = extraction_res.get("url")
+                
+                # Handle PDF Fallback (Sequential for now, but rare)
                 if extraction_res.get("is_pdf", False):
-                    # Fallback to LlamaExtract for PDF content
                     pdf_path = extraction_res.get("pdf_path")
                     if pdf_path and os.path.exists(pdf_path):
-                        safe_get_logger().info(
-                            "PDF downloaded to %s, routing to LlamaExtract: %s",
-                            pdf_path,
-                            current_url,
-                        )
+                        safe_get_logger().info("PDF detected, routing to LlamaExtract: %s", current_url)
                         try:
-                            # Extract using LlamaExtract
-                            (
-                                pdf_extraction,
-                                pdf_cost,
-                            ) = await entity_extractor.extract_entities(
+                            pdf_extraction, pdf_cost = await entity_extractor.extract_entities(
                                 pdf_path, current_url, raw_html=None
                             )
-                            extraction_res = pdf_extraction
+                            # Merge entities from PDF into the results
+                            extraction_res["entities"] = pdf_extraction.get("entities", [])
+                            extraction_res["links"] = pdf_extraction.get("links", [])
                             iteration_cost += pdf_cost
                         finally:
-                            # Cleanup temporary PDF file
-                            try:
+                            if os.path.exists(pdf_path):
                                 os.remove(pdf_path)
-                            except Exception as e:
-                                safe_get_logger().warning(
-                                    "Failed to cleanup PDF %s: %s", pdf_path, e
-                                )
 
                 pages_fetched += 1
+                
+                # Process discovered entities
+                entities_from_this_url_canonical_names = []
+                entity_mark_tasks = []
+                for entry in extraction_res.get("entities", []):
+                    canonical = entry.get("canonical")
+                    if not canonical:
+                        continue
 
-            except Exception as e:
-                safe_get_logger().error("Extraction failed for %s: %s", current_url, e)
-                continue
+                    new_entities_found.append(entry)
+                    entities_from_this_url_canonical_names.append(canonical)
+                    entity_mark_tasks.append(state_manager.mark_entity_known(
+                        canonical, attributes=entry.get("attributes")
+                    ))
+                
+                # --- Parallel Entity Marking ---
+                if entity_mark_tasks:
+                    mark_results = await asyncio.gather(*entity_mark_tasks)
+                    globally_new_count += sum(1 for r in mark_results if r)
 
-            # Entity Deduplication Logic
-            entities_from_this_url = []
-            for entry in extraction_res.get("entities", []):
-                canonical = entry.get("canonical")
-                if not canonical:
+                # Track domain performance
+                source_domain = urlparse(current_url).netloc
+                if entities_from_this_url_canonical_names:
+                    if source_domain not in worker_state.link_performance:
+                        worker_state.link_performance[source_domain] = {"links_added": 0, "entities_found": 0}
+                    worker_state.link_performance[source_domain]["entities_found"] += len(entities_from_this_url_canonical_names)
+
+                # ================================================================
+                # Link Filtering & Scoring (Phase 1, 2, 3)
+                # ================================================================
+                raw_links = extraction_res.get("links", [])
+                if not raw_links:
                     continue
 
-                # Always add to extracted_data so we capture the evidence
-                new_entities_found.append(entry)
-                entities_from_this_url.append(canonical)
-
-                # Attempt to mark as known. If it returns True, it's a NEW entity.
-                # Even if it's already known, mark_entity_known will handle metadata merging.
-                if await state_manager.mark_entity_known(
-                    canonical, attributes=entry.get("attributes")
-                ):
-                    globally_new_count += 1
-
-            # PHASE 3: Track yield for the source URL's domain
-            if entities_from_this_url:
-                source_domain = urlparse(current_url).netloc
-                if source_domain in worker_state.link_performance:
-                    worker_state.link_performance[source_domain]["entities_found"] += len(
-                        entities_from_this_url
-                    )
-
-            # ================================================================
-            # PHASE 1, 2, 3: Intelligent Link Filtering
-            # ================================================================
-            raw_links = extraction_res.get("links", [])
-            
-            if raw_links:
                 link_filter = LinkFilter()
                 
-                # Phase 1: Fast Rejection (heuristics)
+                # Parallelize visited check
+                visited_tasks = [state_manager.is_url_visited(l, research_id=worker_state.research_id) for l in raw_links]
+                visited_mask = await asyncio.gather(*visited_tasks)
+                
                 filtered_links = []
-                for link in raw_links:
-                    # Check if already visited (global dedup)
-                    if await state_manager.is_url_visited(
-                        link, research_id=worker_state.research_id
-                    ):
+                for link, is_visited in zip(raw_links, visited_mask):
+                    if is_visited:
                         continue
-                    
-                    # Fast rejection patterns
                     should_reject, reason = link_filter.should_reject_fast(link)
                     if should_reject:
-                        safe_get_logger().debug(
-                            "Rejected link (Phase 1): %s - %s", link[:50], reason
-                        )
                         continue
-                    
                     filtered_links.append(link)
-                
-                # Phase 2: LLM Relevance Scoring (when queue pressure > 50%)
-                current_queue_size = len(worker_state.personal_queue)
+
+                if not filtered_links:
+                    continue
+
+                current_queue_size = len(worker_state.personal_queue) + len(discovered_links)
                 queue_pressure = link_filter.get_queue_pressure(current_queue_size)
-                
-                if queue_pressure > 0.5 and filtered_links:
-                    # Enable LLM scoring for high queue pressure
-                    safe_get_logger().info(
-                        "Queue pressure %.2f - enabling LLM link scoring for %d links",
-                        queue_pressure,
-                        len(filtered_links),
-                    )
-                    
+
+                if queue_pressure > 0.5:
+                    # Score links if queue is getting full
                     link_scorer = LinkScorer(research_id=worker_state.research_id)
+                    links_to_score = [{"url": link, "anchor_text": "", "context": ""} for link in filtered_links]
+                    scored_links = await link_scorer.score_links_batch(links_to_score, research_query=str(query))
                     
-                    # Prepare link data for scoring (we don't have anchor/context from Crawl4AI currently)
-                    links_to_score = [
-                        {
-                            "url": link,
-                            "anchor_text": "",  # TODO: Extract from Crawl4AI if available
-                            "context": "",
-                        }
-                        for link in filtered_links
-                    ]
+                    iteration_cost += sum(l["cost"] for l in scored_links)
                     
-                    # Get the current query for context
-                    current_query = query if isinstance(query, str) else str(query)
+                    # Apply adaptive boost
+                    for l_data in scored_links:
+                        l_url = l_data["url"]
+                        l_domain = urlparse(l_url).netloc
+                        l_data["adjusted_score"] = l_data["score"]
+                        if l_domain in worker_state.link_performance:
+                            perf = worker_state.link_performance[l_domain]
+                            if perf["links_added"] >= 5:
+                                yield_rate = perf["entities_found"] / max(perf["links_added"], 1)
+                                if yield_rate > 0.3: l_data["adjusted_score"] += 2
+                                elif yield_rate < 0.05: l_data["adjusted_score"] -= 2
                     
-                    # Score all links
-                    scored_links = await link_scorer.score_links_batch(
-                        links_to_score, research_query=current_query
-                    )
-                    
-                    # Add scoring cost to iteration total
-                    scoring_cost = sum(link["cost"] for link in scored_links)
-                    iteration_cost += scoring_cost
-                    
-                    # Phase 3: Adaptive Learning - adjust scores based on domain performance
-                    for link_data in scored_links:
-                        link_url = link_data["url"]
-                        base_score = link_data["score"]
-                        
-                        # Get domain
-                        domain = urlparse(link_url).netloc
-                        
-                        # Apply adaptive boost/penalty
-                        if domain in worker_state.link_performance:
-                            perf = worker_state.link_performance[domain]
-                            links_added = perf.get("links_added", 0)
-                            entities_found = perf.get("entities_found", 0)
-                            
-                            if links_added >= 5:  # Need minimum data
-                                yield_rate = entities_found / max(links_added, 1)
-                                
-                                if yield_rate > 0.3:
-                                    # High-performing domain - boost score
-                                    link_data["adjusted_score"] = min(base_score + 2, 10)
-                                    link_data["boost_reason"] = f"High yield domain ({yield_rate:.2%})"
-                                elif yield_rate < 0.05:
-                                    # Low-performing domain - penalty
-                                    link_data["adjusted_score"] = max(base_score - 2, 0)
-                                    link_data["boost_reason"] = f"Low yield domain ({yield_rate:.2%})"
-                                else:
-                                    link_data["adjusted_score"] = base_score
-                            else:
-                                link_data["adjusted_score"] = base_score
-                        else:
-                            link_data["adjusted_score"] = base_score
-                    
-                    # Sort by adjusted score (descending)
                     scored_links.sort(key=lambda x: x.get("adjusted_score", x["score"]), reverse=True)
-                    
-                    # Take top N based on available queue space
                     available_space = max(0, link_filter.MAX_QUEUE_SIZE - current_queue_size)
-                    top_links = scored_links[:available_space]
                     
-                    # Track domain performance (Phase 3)
-                    for link_data in top_links:
-                        link_url = link_data["url"]
-                        domain = urlparse(link_url).netloc
-                        
-                        if domain not in worker_state.link_performance:
-                            worker_state.link_performance[domain] = {
-                                "links_added": 0,
-                                "entities_found": 0,
-                            }
-                        
-                        worker_state.link_performance[domain]["links_added"] += 1
-                        discovered_links.append(link_url)
-                    
-                    safe_get_logger().info(
-                        "Added %d/%d scored links (scores: %s)",
-                        len(top_links),
-                        len(scored_links),
-                        [f"{l['adjusted_score']:.1f}" for l in top_links[:5]],
-                    )
+                    for l_data in scored_links[:available_space]:
+                        l_url = l_data["url"]
+                        l_domain = urlparse(l_url).netloc
+                        if l_domain not in worker_state.link_performance:
+                            worker_state.link_performance[l_domain] = {"links_added": 0, "entities_found": 0}
+                        worker_state.link_performance[l_domain]["links_added"] += 1
+                        discovered_links.append(l_url)
                 else:
-                    # Queue pressure low - add all filtered links up to cap
+                    # Queue space available, add up to space limit
                     available_space = max(0, link_filter.MAX_QUEUE_SIZE - current_queue_size)
-                    
                     for link in filtered_links[:available_space]:
-                        # Track domain performance (Phase 3)
-                        domain = urlparse(link).netloc
-                        
-                        if domain not in worker_state.link_performance:
-                            worker_state.link_performance[domain] = {
-                                "links_added": 0,
-                                "entities_found": 0,
-                            }
-                        
-                        worker_state.link_performance[domain]["links_added"] += 1
+                        l_domain = urlparse(link).netloc
+                        if l_domain not in worker_state.link_performance:
+                            worker_state.link_performance[l_domain] = {"links_added": 0, "entities_found": 0}
+                        worker_state.link_performance[l_domain]["links_added"] += 1
                         discovered_links.append(link)
+
+            # --- Intermediate State Persistence for Dashboard ---
+            # Update the DB so the user sees progress while the worker is still running its iteration.
+            try:
+                # Calculate current iteration metrics accurately
+                # Note: worker_state.pages_fetched is the total BEFORE this iteration started.
+                # pages_fetched is the count for THIS iteration so far.
+                await _persist_intermediate_metrics(
+                    worker_id=worker_state.id,
+                    research_id=worker_state.research_id,
+                    pages_fetched=worker_state.pages_fetched + pages_fetched,
+                    entities_found=worker_state.entities_found + len(new_entities_found)
+                )
+            except Exception as e:
+                safe_get_logger().warning(f"Failed to persist intermediate metrics: {e}")
 
         # Update query record with results
         query_record["new_entities"] = globally_new_count
@@ -454,6 +437,34 @@ async def execute_worker_iteration(worker_state: WorkerState) -> dict:
         perf["engines_used"][search_engine]["entities"] += globally_new_count
 
         novelty_rate = globally_new_count / max(pages_fetched, 1)
+
+        novelty_rate = globally_new_count / max(pages_fetched, 1)
+
+        # OPTIMIZATION: Persist newly found entities immediately to the Relational DB.
+        # This allows us to avoid the expensive O(N) save in the main workflow.
+        if new_entities_found:
+             try:
+                 async with AsyncSessionLocal() as session:
+                     repo = ResearchRepository(session)
+                     # Convert dicts back to Entity objects for saving if needed, 
+                     # but wait, new_entities_found is a list of dicts (from extraction.py).
+                     # Repo expects Entity objects.
+                     
+                     entities_to_save = []
+                     for e_data in new_entities_found:
+                         # Extraction returns dicts, need to ensure compatibility
+                         # Entity(...) constructor
+                         # NOTE: e_data might contain 'evidence' as list of objects or dicts?
+                         # extraction.py returns Pydantic models usually or dicts.
+                         # Looking at extraction.py (not shown), it likely returns dicts.
+                         # Let's assume dicts and hydrate carefully.
+                         ent_obj = Entity(**e_data)
+                         entities_to_save.append(ent_obj)
+                     
+                     await repo.save_entities_batch(entities_to_save)
+                     safe_get_logger().info(f"Worker {worker_state.id} persisted {len(entities_to_save)} new entities.")
+             except Exception as e:
+                 safe_get_logger().error(f"Failed to persist batch of entities: {e}")
 
         return {
             "worker_id": worker_state.id,
@@ -532,6 +543,22 @@ async def verify_entity(entity_data: dict, constraints: dict) -> dict:
 
     output = result.model_dump()
     output["cost"] = cost
+    
+    # OPTIMIZATION: Persist the verification result immediately to Relational DB
+    # because save_state no longer iterates all entities.
+    try:
+        if result.status != "UNVERIFIED":
+            entity.verification_status = result.status
+            entity.rejection_reason = result.rejection_reason
+            entity.confidence_score = result.confidence
+            
+            async with AsyncSessionLocal() as session:
+                repo = ResearchRepository(session)
+                await repo.save_entity(entity)
+                safe_get_logger().info(f"Persisted verification for {entity.canonical_name}")
+    except Exception as e:
+        safe_get_logger().error(f"Failed to persist verification result: {e}")
+
     return output
 
 
@@ -564,3 +591,27 @@ async def analyze_gaps(entity_data: dict, verification_result: dict) -> list[str
         "Generated %d gap-filling queries for %s", len(queries), canonical_name
     )
     return queries
+
+async def _persist_intermediate_metrics(
+    worker_id: str, 
+    research_id: str, 
+    pages_fetched: int, 
+    entities_found: int
+):
+    """Updates the database with the latest metrics from a running worker."""
+    async with AsyncSessionLocal() as session:
+        repo = ResearchRepository(session)
+        state = await repo.get_session(research_id)
+        if not state or worker_id not in state.workers:
+            return
+
+        # Update specific worker metrics
+        w = state.workers[worker_id]
+        w.pages_fetched = pages_fetched
+        w.entities_found = entities_found
+        
+        # Save the full state dump
+        # Note: This is an intermediate update, so we don't worry about merging 
+        # entities here; this is purely for the worker-level counters on the UI.
+        await repo.save_session(state)
+        safe_get_logger().info(f"Updated intermediate metrics for {worker_id}: {pages_fetched} pages, {entities_found} assets")

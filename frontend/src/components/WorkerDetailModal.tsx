@@ -67,6 +67,9 @@ export const WorkerDetailModal: React.FC<Props> = ({ worker, isOpen, onClose }) 
                                 <div className={`text-xs font-bold ${worker.status === 'ACTIVE' ? 'text-green-500' : 'text-muted-foreground'}`}>
                                     {worker.status}
                                 </div>
+                                <div className="text-[10px] text-muted-foreground mt-1">
+                                    Last Check: {new Date().toLocaleTimeString()}
+                                </div>
                             </div>
                             <div className="bg-muted/50 p-4 rounded-2xl border text-center">
                                 <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest mb-1">Efficiency</div>
@@ -88,13 +91,27 @@ export const WorkerDetailModal: React.FC<Props> = ({ worker, isOpen, onClose }) 
                         <div className="space-y-4">
                             <h3 className="text-sm font-semibold flex items-center gap-2 text-primary">
                                 <Search className="w-4 h-4" />
-                                Active Objective
+                                Active Objectives ({worker.queries?.length || 0})
                             </h3>
-                            <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 shadow-inner">
-                                <div className="text-[10px] font-bold text-primary/60 uppercase tracking-wider mb-2">Live Search Query</div>
-                                <p className="text-sm font-mono font-medium text-foreground leading-relaxed italic">
-                                    "{typeof worker.queries?.[0] === 'string' ? worker.queries[0] : (worker.queries?.[0] as any)?.query || 'Wait for next cycle...'}"
-                                </p>
+                            <div className="space-y-2">
+                                {worker.queries && worker.queries.length > 0 ? (
+                                    worker.queries.map((q, idx) => (
+                                        <div key={idx} className="bg-primary/5 border border-primary/20 rounded-2xl p-3 shadow-sm">
+                                            <div className="text-[10px] font-bold text-primary/60 uppercase tracking-wider mb-1">
+                                                Query #{idx + 1}
+                                            </div>
+                                            <p className="text-sm font-mono font-medium text-foreground leading-relaxed italic">
+                                                "{typeof q === 'string' ? q : (q as any)?.query}"
+                                            </p>
+                                        </div>
+                                    ))
+                                ) : (
+                                    <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4 shadow-inner">
+                                        <p className="text-sm font-mono font-medium text-foreground leading-relaxed italic text-muted-foreground">
+                                            Waiting for next cycle...
+                                        </p>
+                                    </div>
+                                )}
                             </div>
                         </div>
 

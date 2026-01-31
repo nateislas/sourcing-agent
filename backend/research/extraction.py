@@ -164,14 +164,33 @@ class LlamaExtractionClient:
         if self.agent_id:
             return self.agent_id
 
-        agent_name = f"drug-discovery-{self.research_id}"
+        # LlamaCloud has a 64-char limit for agent descriptions/names. 
+        # Construction: "drug-discovery-" (15 chars) + research_id.
+        # If research_id is long, we must truncate or hash.
+        # Since research_id is usually a UUID or slug, let's keep it simple.
+        
+        safe_research_id = self.research_id
+        if len(safe_research_id) > 40:
+             # If too long, take first 20 chars + hash of the rest
+             import hashlib
+             suffix = hashlib.md5(safe_research_id.encode()).hexdigest()[:8]
+             safe_research_id = f"{safe_research_id[:30]}-{suffix}"
+             
+        agent_name = f"drug-discovery-{safe_research_id}"
+        # Hard cap just in case
+        agent_name = agent_name[:64]
 
         # List existing agents to find ours
-        agents = await self.client.extraction.extraction_agents.list()
-        for agent in agents:
-            if agent.name == agent_name:
-                self.agent_id = agent.id
-                return self.agent_id
+        try:
+            agents = await self.client.extraction.extraction_agents.list()
+            for agent in agents:
+                if agent.name == agent_name:
+                    self.agent_id = agent.id
+                    return self.agent_id
+        except Exception as e:
+            if self.logger:
+                self.logger.warning(f"Failed to list extraction agents: {e}")
+            # Don't raise yet, try create (which might fail with 409 if it exists, handled below)
 
         # Create new agent if not found, handling race conditions (409)
         try:

@@ -7,6 +7,7 @@ import logging
 from abc import ABC, abstractmethod
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 
 from backend.db.connection import AsyncSessionLocal
@@ -61,15 +62,13 @@ class DatabaseStateManager(StateManager):
     async def mark_url_visited(self, url: str, research_id: str | None = None) -> bool:
         async with AsyncSessionLocal() as session:
             try:
-                # Check exist first to save exception overhead
-                # (Optional optimization, strict correctness relies on DB constraints)
-                visited = VisitedURL(url=url, research_id=research_id)
-                session.add(visited)
+                # Use ON CONFLICT DO NOTHING to avoid "duplicate key value" errors in logs
+                stmt = insert(VisitedURL).values(url=url, research_id=research_id)
+                stmt = stmt.on_conflict_do_nothing(index_elements=["url"])
+                result = await session.execute(stmt)
                 await session.commit()
-                return True
-            except IntegrityError:
-                await session.rollback()
-                return False
+                # rowcount is 1 if inserted, 0 if conflict
+                return result.rowcount > 0
             except Exception as e:
                 await session.rollback()
                 logger.exception("Error marking URL %s as visited: %s", url, e)
@@ -137,3 +136,72 @@ class DatabaseStateManager(StateManager):
                     "Error marking entity %s as known: %s", canonical_name, e
                 )
                 return False
+
+
+class RedisStateManager(StateManager):
+    """
+    Implementation of StateManager using Redis for caching and DB for persistence.
+    Uses 'Cache-Aside' pattern for reads and 'Write-Through' for writes.
+    """
+
+    def __init__(self):
+        import os
+        import redis.asyncio as redis
+        
+        self.redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
+        # decode_responses=True ensures we get str back, not bytes
+        self.redis = redis.from_url(self.redis_url, decode_responses=True)
+        self.db_manager = DatabaseStateManager()
+
+    async def is_url_visited(self, url: str, research_id: str | None = None) -> bool:
+        key = f"visited_urls:{research_id}" if research_id else "visited_urls"
+        
+        # 1. Check Redis
+        if await self.redis.sismember(key, url):
+            return True
+            
+        # 2. Check DB (Cache Miss)
+        if await self.db_manager.is_url_visited(url, research_id):
+            # Populate cache
+            await self.redis.sadd(key, url)
+            return True
+            
+        return False
+
+    async def mark_url_visited(self, url: str, research_id: str | None = None) -> bool:
+        key = f"visited_urls:{research_id}" if research_id else "visited_urls"
+        
+        # Write-Through: Write to DB first
+        is_new = await self.db_manager.mark_url_visited(url, research_id)
+        
+        # Provide consistency: Add to Redis regardless of DB result
+        await self.redis.sadd(key, url)
+        
+        return is_new
+
+    async def is_entity_known(self, canonical_name: str) -> bool:
+        key = "known_entities"
+        
+        # 1. Check Redis
+        if await self.redis.sismember(key, canonical_name):
+            return True
+            
+        # 2. Check DB
+        if await self.db_manager.is_entity_known(canonical_name):
+            await self.redis.sadd(key, canonical_name)
+            return True
+            
+        return False
+
+    async def mark_entity_known(
+        self, canonical_name: str, attributes: dict | None = None
+    ) -> bool:
+        key = "known_entities"
+        
+        # Write-Through
+        is_new = await self.db_manager.mark_entity_known(canonical_name, attributes)
+        
+        # Update Cache
+        await self.redis.sadd(key, canonical_name)
+        
+        return is_new

@@ -264,7 +264,13 @@ class DeepResearchWorkflow(Workflow):
                 # Add evidence and aliases
                 entity = state.known_entities[canonical]
                 entity.aliases.add(alias)
-                entity.evidence.extend(evidence)
+                
+                # Deduplicate evidence within the entity
+                existing_signatures = {(ev.source_url, ev.content) for ev in entity.evidence}
+                for ev in evidence:
+                    if (ev.source_url, ev.content) not in existing_signatures:
+                        entity.evidence.append(ev)
+                        existing_signatures.add((ev.source_url, ev.content))
 
         state.iteration_count += 1
         global_novelty = total_new_entities / max(total_pages, 1)
