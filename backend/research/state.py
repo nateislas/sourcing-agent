@@ -235,6 +235,7 @@ class ResearchState(BaseModel):
     )
 
     iteration_count: int = 0
+    consecutive_low_novelty_count: int = 0
     logs: list[str] = Field(default_factory=list)
 
     # Discovery tracking for gap detection

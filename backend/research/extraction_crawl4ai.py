@@ -303,24 +303,35 @@ class Crawl4AIExtractor:
                 {"success": result.success, "status_code": result.status_code},
             )
 
+        download_detected = False
         if not result.success:
-            if self.logger:
-                self.logger.warning(
-                    "Crawl4AI failed for URL [%s]: %s", url, result.error_message
-                )
-            return {"entities": [], "links": [], "is_pdf": False, "url": url}, 0.0
+            # Check if failure is due to a download trigger
+            if result.error_message and "Download is starting" in str(result.error_message):
+                download_detected = True
+                if self.logger:
+                    self.logger.info("Download detected for URL [%s], attempting manual fetch.", url)
+            else:
+                if self.logger:
+                    self.logger.warning(
+                        "Crawl4AI failed for URL [%s]: %s", url, result.error_message
+                    )
+                return {"entities": [], "links": [], "is_pdf": False, "url": url}, 0.0
 
         # Detect if we got PDF content
         final_url = result.url or url
         markdown_content = result.markdown or ""
+        
+        # Diagnostic logging for empty/short content
+        if self.logger:
+             self.logger.info("Extracted markdown length for %s: %d characters", url, len(markdown_content))
 
         is_pdf_url = final_url.lower().endswith(".pdf")
         is_pdf_content_marker = markdown_content.startswith("%PDF-")
 
-        if is_pdf_url or is_pdf_content_marker:
+        if is_pdf_url or is_pdf_content_marker or download_detected:
             if self.logger:
                 self.logger.info(
-                    "PDF detected at %s. Downloading binary for LlamaExtract.",
+                    "PDF/Download detected at %s. Downloading binary for inspection/LlamaExtract.",
                     url,
                 )
 
@@ -331,6 +342,16 @@ class Crawl4AIExtractor:
                 async with httpx.AsyncClient(follow_redirects=True) as client:
                     response = await client.get(url, timeout=30.0)
                     response.raise_for_status()
+                    
+                    # If this was a generic download detection, verify it is actually a PDF
+                    if download_detected and not is_pdf_url:
+                        content_type = response.headers.get("content-type", "").lower()
+                        if "application/pdf" not in content_type and b"%PDF-" not in response.content[:10]:
+                            if self.logger:
+                                self.logger.info("Downloaded content from %s is not PDF (type: %s). Skipping.", url, content_type)
+                            os.remove(temp_path)
+                            return {"entities": [], "links": [], "is_pdf": False, "url": url}, 0.0
+
                     with open(temp_path, "wb") as f:
                         f.write(response.content)
 

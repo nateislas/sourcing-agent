@@ -306,11 +306,26 @@ class DeepResearchWorkflow(Workflow):
             logger.info(msg)
 
         novelty_threshold = float(os.getenv("NOVELTY_THRESHOLD", "0.05"))
-        if global_novelty < novelty_threshold and state.iteration_count > 1:
-            should_stop = True
-            msg = f"Stopping: Low novelty detected ({global_novelty:.2%})."
-            state.logs.append(msg)
-            logger.info(msg)
+        
+        if global_novelty < novelty_threshold:
+            state.consecutive_low_novelty_count += 1
+            logger.warning(
+                "Low novelty detected (%.2f%% < %.2f%%). Consecutive count: %d",
+                global_novelty * 100,
+                novelty_threshold * 100,
+                state.consecutive_low_novelty_count
+            )
+            
+            if state.consecutive_low_novelty_count >= 2 and state.iteration_count > 1:
+                should_stop = True
+                msg = f"Stopping: Low novelty ({global_novelty:.2%}) for 2 consecutive iterations."
+                state.logs.append(msg)
+                logger.info(msg)
+        else:
+            # Reset counter if we found good stuff
+            if state.consecutive_low_novelty_count > 0:
+                logger.info("Novelty recovered (%.2f%%). Resetting consecutive low novelty count.", global_novelty * 100)
+            state.consecutive_low_novelty_count = 0
 
         # 4. All workers dead?
         all_dead = all(w.status == "DEAD_END" for w in state.workers.values())

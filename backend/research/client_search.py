@@ -55,17 +55,42 @@ class PerplexitySearchClient:
         if max_results is None:
             max_results = int(os.getenv("PERPLEXITY_MAX_RESULTS", "5"))
         
-        # Perplexity API max limit is 20
+        # Perplexity API max limit is 20 (though docs say defaults)
         max_results = min(max_results, 20)
+
+        # New Parameters for Deep Research
+        max_tokens = kwargs.get("max_tokens") or int(os.getenv("PERPLEXITY_MAX_TOKENS", "100000"))
+        # Perplexity default is 25000 total. We want 100k for parallel deep dives.
+        
+        max_tokens_per_page = kwargs.get("max_tokens_per_page") 
+        if not max_tokens_per_page:
+             # Default to 4k if not set, or env var
+             max_tokens_per_page = int(os.getenv("PERPLEXITY_MAX_TOKENS_PER_PAGE", "4096"))
+
+        search_domain_filter = kwargs.get("search_domain_filter") 
+        # No default domain filter from env to avoid accidental filtering
+
+        recency = kwargs.get("recency") # 'month', 'week', 'year', 'day'
+        if not recency:
+            recency = os.getenv("PERPLEXITY_RECENCY")
 
         # Perplexity SDK is synchronous, so we run in executor
         loop = asyncio.get_event_loop()
 
         def _run_search():
-            return self.client.search.create(
-                query=queries,
-                max_results=max_results,
-            )
+            # Construct API params
+            params = {
+                "query": queries,
+                "max_results": max_results,
+                "max_tokens": max_tokens,
+                "max_tokens_per_page": max_tokens_per_page,
+            }
+            if search_domain_filter:
+                params["search_domain_filter"] = search_domain_filter
+            if recency:
+                params["search_recency_filter"] = recency
+
+            return self.client.search.create(**params)
 
         response = await loop.run_in_executor(None, _run_search)
 
@@ -74,7 +99,13 @@ class PerplexitySearchClient:
                 self.logger,
                 "perplexity",
                 "search",
-                {"queries": queries, "max_results": max_results},
+                {
+                    "queries": queries, 
+                    "max_results": max_results,
+                    "max_tokens": max_tokens,
+                    "domain_filter": search_domain_filter,
+                    "recency": recency
+                },
                 response,
             )
 
@@ -216,6 +247,9 @@ class TavilySearchClient:
         # Normalize to list for uniform handling
         queries = [query] if isinstance(query, str) else query
 
+        topic = kwargs.get("topic") or os.getenv("TAVILY_TOPIC", "general")
+        days = kwargs.get("days") or int(os.getenv("TAVILY_DAYS", "365"))
+
         # Execute all queries in parallel
         responses = await asyncio.gather(
             *(
@@ -224,6 +258,8 @@ class TavilySearchClient:
                     max_results=max_results,
                     include_raw_content=include_raw_content,
                     search_depth=search_depth,
+                    topic=topic,
+                    days=days,
                 )
                 for q in queries
             ),
