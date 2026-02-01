@@ -42,8 +42,8 @@ class InitialPlanningWorkflow(Workflow):
         if model_name is None:
             model_name = os.getenv("PLANNING_MODEL")
             if not model_name:
-                logging.getLogger(__name__).warning("PLANNING_MODEL not set in .env. Falling back to gemini-2.0-flash.")
-                model_name = "gemini-2.0-flash"
+                logging.getLogger(__name__).warning("PLANNING_MODEL not set in .env. Falling back to gemini-3-flash-preview.")
+                model_name = "gemini-3-flash-preview"
         
         thinking_budget = int(os.getenv("PLANNING_THINKING_BUDGET", "0")) or None
         temperature = float(os.getenv("PLANNING_TEMPERATURE", "1.0"))

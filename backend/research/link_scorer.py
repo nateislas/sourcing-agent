@@ -51,8 +51,8 @@ class LinkScorer:
         self.logger = get_session_logger(research_id) if research_id else None
         self.model = os.getenv("LINK_SCORING_MODEL")
         if not self.model:
-            logging.getLogger(__name__).warning("LINK_SCORING_MODEL not set in .env. Falling back to gemini-2.0-flash.")
-            self.model = "gemini-2.0-flash"
+            logging.getLogger(__name__).warning("LINK_SCORING_MODEL not set in .env. Falling back to gemini-2.5-flash-lite.")
+            self.model = "gemini-2.5-flash-lite"
 
     async def score_links_batch(
         self,
