@@ -57,7 +57,7 @@ async def test_generate_initial_plan_success(mock_workflow):
     plan = await agent.generate_initial_plan("Test Topic")
 
     assert plan == expected_plan
-    mock_workflow.run.assert_called_once_with(topic="Test Topic")
+    mock_workflow.run.assert_called_once_with(topic="Test Topic", context="")
 
 
 @pytest.mark.asyncio

@@ -38,15 +38,44 @@ def safe_get_logger():
 
 
 @activity.defn
+async def perform_initial_search(topic: str, research_id: str | None = None) -> str:
+    """
+    Performs a broad initial search to gather context for planning.
+    """
+    safe_get_logger().info("Performing initial pre-planning search for: %s", topic)
+    
+    # Use Perplexity for reasoning-heavy overview
+    client = PerplexitySearchClient(research_id=research_id)
+    
+    query = f"Overview of {topic} including comprehensive synonyms, key companies, code names, and current clinical landscape."
+    
+    try:
+        results = await client.search(queries=query, max_results=5)
+        
+        # Concatenate results into a context string
+        context_parts = []
+        for i, res in enumerate(results, 1):
+            context_parts.append(f"Source {i}: {res.title}\n{res.snippet}\n")
+            
+        full_context = "\n".join(context_parts)
+        safe_get_logger().info("Initial search gathered %d characters of context", len(full_context))
+        return full_context
+        
+    except Exception as e:
+        safe_get_logger().error("Initial search failed: %s", e)
+        return "Pre-planning search failed. Proceed with internal knowledge only."
+
+
+@activity.defn
 async def generate_initial_plan(
-    topic: str, research_id: str | None = None
+    topic: str, research_id: str | None = None, context: str = ""
 ) -> ResearchPlan:
     """
     Generates the initial research plan using the Research Agent.
     """
     safe_get_logger().info("Generating initial plan for: %s", topic)
     agent = ResearchAgent()
-    return await agent.generate_initial_plan(topic, research_id=research_id)
+    return await agent.generate_initial_plan(topic, research_id=research_id, context=context)
 
 
 @activity.defn

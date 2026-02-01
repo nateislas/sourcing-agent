@@ -49,7 +49,7 @@ class ResearchAgent:
         self.research_thinking_budget = int(os.getenv("RESEARCH_THINKING_BUDGET", "0")) or None
 
     async def generate_initial_plan(
-        self, topic: str, research_id: str | None = None
+        self, topic: str, research_id: str | None = None, context: str = ""
     ) -> ResearchPlan:
         """
         Generates the initial research plan using the planning workflow.
@@ -65,7 +65,7 @@ class ResearchAgent:
         )
 
         try:
-            handler = planning_workflow.run(topic=topic)
+            handler = planning_workflow.run(topic=topic, context=context)
             result = await handler
 
             if isinstance(result, ResearchPlan):

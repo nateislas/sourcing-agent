@@ -1,13 +1,12 @@
 import React, { useState } from 'react';
-import type { ResearchPlan, Entity } from '../types';
-import { Lightbulb, Target, ArrowRight, BrainCircuit, ChevronDown, ChevronUp, Fingerprint } from 'lucide-react';
+import type { ResearchPlan } from '../types';
+import { Lightbulb, Target, ArrowRight, BrainCircuit, ChevronDown, ChevronUp } from 'lucide-react';
 
 interface Props {
     plan: ResearchPlan;
-    entities?: Record<string, Entity>;
 }
 
-export const PlanOverview: React.FC<Props> = ({ plan, entities }) => {
+export const PlanOverview: React.FC<Props> = ({ plan }) => {
     const [expanded, setExpanded] = useState(false);
 
     return (
@@ -89,45 +88,7 @@ export const PlanOverview: React.FC<Props> = ({ plan, entities }) => {
                 </div>
             </div>
 
-            {/* Knowledge Graph Vocabulary */}
-            {entities && Object.keys(entities).length > 0 && (
-                <div className="pt-4 border-t space-y-4">
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                            <Fingerprint className="w-3 h-3" />
-                            Knowledge Graph Highlights
-                        </div>
-                        <div className="text-[10px] text-muted-foreground italic">
-                            Agent is mapping {Object.keys(entities).length} unique concepts
-                        </div>
-                    </div>
-                    <div className="flex flex-wrap gap-x-6 gap-y-3">
-                        {Object.values(entities)
-                            .filter(e => e.mention_count > 1 || e.aliases.length > 1) // Only show "interesting" ones
-                            .slice(0, 20)
-                            .map((entity, i) => {
-                                const hasUniqueAlias = entity.aliases &&
-                                    entity.aliases.some(a => a.toLowerCase() !== entity.canonical_name.toLowerCase());
-                                const isCodeName = /^[A-Z]{1,4}-\d+/.test(entity.canonical_name);
 
-                                return (
-                                    <div key={i} className="flex items-center gap-2 group">
-                                        <span className={`text-sm font-medium transition-colors ${isCodeName ? 'text-primary/80 font-mono' : 'text-foreground'
-                                            } group-hover:text-primary`}>
-                                            {entity.canonical_name}
-                                        </span>
-                                        {hasUniqueAlias && (
-                                            <span className="text-[10px] text-muted-foreground italic bg-muted/50 px-1.5 py-0.5 rounded border border-border/50">
-                                                {entity.aliases.find(a => a.toLowerCase() !== entity.canonical_name.toLowerCase())}
-                                            </span>
-                                        )}
-                                    </div>
-                                );
-                            })
-                        }
-                    </div>
-                </div>
-            )}
         </div>
     );
 };

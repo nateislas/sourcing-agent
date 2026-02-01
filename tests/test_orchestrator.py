@@ -16,6 +16,7 @@ async def test_deep_research_workflow_structure():
     # Mock activities
     with (
         patch("backend.research.activities.generate_initial_plan") as mock_plan,
+        patch("backend.research.activities.perform_initial_search") as mock_search,
         patch("backend.research.activities.save_state") as mock_save,
         patch("backend.research.activities.execute_worker_iteration") as mock_exec,
         patch("backend.research.activities.update_plan") as mock_update,

@@ -18,6 +18,9 @@ You are a biomedical entity discovery planner. Your goal is to analyze the user'
 
 Query: {query}
 
+**Context from Preliminary Research:**
+{context}
+
 Perform the following analysis:
 
 1.  **Query Structure Analysis:**

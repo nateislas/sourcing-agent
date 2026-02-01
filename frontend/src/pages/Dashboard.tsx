@@ -102,7 +102,7 @@ export const Dashboard: React.FC = () => {
                     </div>
 
                     {/* Research Plan Overview */}
-                    {state.plan && <PlanOverview plan={state.plan} entities={state.known_entities} />}
+                    {state.plan && <PlanOverview plan={state.plan} />}
 
                     {/* Main Grid */}
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

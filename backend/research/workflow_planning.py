@@ -60,8 +60,9 @@ class InitialPlanningWorkflow(Workflow):
         if not topic:
             raise ValueError("Missing topic for planning")
 
-        # The prompt expects {query}
-        prompt_str = INITIAL_PLANNING_PROMPT.format(query=topic)
+        # The prompt expects {query} and {context}
+        context = ev.get("context", "")
+        prompt_str = INITIAL_PLANNING_PROMPT.format(query=topic, context=context)
 
         # Call LLM
         response = await self.llm.acomplete(prompt_str)

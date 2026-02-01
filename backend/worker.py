@@ -19,6 +19,7 @@ from backend.research.activities import (
     save_state,
     update_plan,
     verify_entity,
+    perform_initial_search,
 )
 from backend.research.workflows import DeepResearchOrchestrator
 
@@ -63,6 +64,7 @@ async def main():
             save_state,
             verify_entity,
             analyze_gaps,
+            perform_initial_search,
         ],
     )
 

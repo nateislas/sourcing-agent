@@ -38,10 +38,18 @@ class DeepResearchOrchestrator:
             activities.save_state, state, start_to_close_timeout=timedelta(seconds=5)
         )
 
+        # 1.5 Pre-Planning Research
+        state.logs.append("Fetching initial context (Perplexity Pre-Search)...")
+        initial_context = await workflow.execute_activity(
+            activities.perform_initial_search,
+            args=[topic, state.id],
+            start_to_close_timeout=timedelta(minutes=2),
+        )
+
         # 2. Initial Planning
         state.plan = await workflow.execute_activity(
             activities.generate_initial_plan,
-            args=[topic, state.id],
+            args=[topic, state.id, initial_context],
             start_to_close_timeout=timedelta(seconds=60),
         )
         state.logs.append(f"Plan generated: {state.plan.current_hypothesis}")

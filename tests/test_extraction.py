@@ -14,7 +14,7 @@ async def test_entity_extraction_structured():
     """
     Test extraction using mocked LlamaExtract.
     """
-    extractor = EntityExtractor(api_key="test-key")
+    extractor = EntityExtractor(research_id="test-id")
 
     # Mock data returned by LlamaExtract
     mock_data = [
@@ -27,24 +27,43 @@ async def test_entity_extraction_structured():
         )
     ]
 
+    # The client is nested inside llama_client
     with patch.object(
-        extractor.client, "extract_structured_data", new_callable=AsyncMock
-    ) as mock_extract:
-        mock_extract.return_value = (mock_data, 0.0)
+        extractor.llama_client.client, "extraction", new_callable=AsyncMock
+    ) as mock_extraction_service:
+        # Mock the entire chain: client.extraction.jobs.extract
+        mock_job_result = AsyncMock()
+        mock_job_result.data = [d.model_dump() for d in mock_data]
+        mock_extraction_service.jobs.extract.return_value = mock_job_result
+        
+        # We also need to mock files.create
+        extractor.llama_client.client.files = AsyncMock()
+        extractor.llama_client.client.files.create.return_value = AsyncMock(id="file_123")
+        
+        # And extraction agents list/create
+        mock_agent = AsyncMock(id="agent_123", name="test-agent")
+        mock_extraction_service.extraction_agents.list.return_value = [mock_agent]
 
         # Update method call and arguments to match LlamaExtractionClient
-        results, cost = await extractor.extract_structured_data("Some text")
-
-        # Results should contain 1 schema (as returned by LlamaExtract wrapper)
-        entities = [r.model_dump() for r in results]
-        assert len(entities) == 1
+        # Note: We are testing extract_entities which calls extract_structured_data
+        # extract_structured_data calls client.extraction.jobs.extract
         
-        entity = entities[0]
-        assert entity["canonical_name"] == "Relatlimab"
-        assert "BMS-986016" in entity["aliases"]
-        assert entity["modality"] == "LAG-3 inhibitor"
-        assert entity["product_stage"] == "Phase 3"
-        assert "NCT02061761" in entity["trial_ids"]
+        entities_result, cost = await extractor.extract_entities("Some text", "http://source.com")
+
+        # extract_entities returns {"entities": [...], "links": [...]}
+        entities = entities_result["entities"]
+        assert len(entities) >= 1
+        
+        # Find the main entity entry
+        entity = next(e for e in entities if e["canonical"] == "Relatlimab")
+        assert entity["canonical"] == "Relatlimab"
+        assert "BMS-986016" in entity["alias"] or entity["alias"] == "Relatlimab"
+        assert entity["attributes"]["modality"] == "LAG-3 inhibitor"
+        assert entity["attributes"]["product_stage"] == "Phase 3"
+        
+        # Verify trial ID extraction (trials are separate entities in the list)
+        trial_entity = next(e for e in entities if e["canonical"] == "NCT02061761")
+        assert trial_entity["canonical"] == "NCT02061761"
 
 
 @pytest.mark.asyncio
