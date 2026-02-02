@@ -21,19 +21,25 @@ The agent follows an iterative, self-correcting cycle:
 6.  **Reconciliation & Gap-Filling**: Merges aliases into canonical records and triggers "Deep Read" targeted searches to fill missing critical fields (e.g., Owner or Clinical Phase).
 
 
+
 ## 📸 Walkthrough
 
 ### 1. Planning Stage
 The system starts by analyzing the query to generate a comprehensive plan and synonym list.
 ![Planning Stage](./figs/step1_planning.png)
 
-### 2. Adaptive Discovery Loop
-Workers execute in parallel, visualizing their progress and the growing knowledge graph in real-time.
-![Discovery Loop](./figs/step2_discovery_loop.png)
+### 2. Initial Search
+Workers begin execution, populating the initial knowledge graph and identifying key nodes.
+![Initial Search](./figs/step2_initial_search.png)
 
-### 3. Final Verification & Results
+### 3. Adaptive Discovery Loop
+Workers execute in parallel, visualizing their progress and the growing knowledge graph in real-time.
+![Discovery Loop](./figs/step3_discovery_loop.png)
+
+### 4. Final Verification & Results
 After saturation, the system deduplicates and verifies assets, presenting a final auditable table.
-![Final Results](./figs/step3_final_results.png)
+![Final Results](./figs/step4_final_results.png)
+
 
 ## 🛠️ Tech Stack & Rationales
 
