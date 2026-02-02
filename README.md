@@ -20,6 +20,21 @@ The agent follows an iterative, self-correcting cycle:
 5.  **Multi-Tier Verification**: Every discovery is audited against a **4-tier evidence weighting system** (Regulatory filings > Corporate Pipeline > News > Speculative).
 6.  **Reconciliation & Gap-Filling**: Merges aliases into canonical records and triggers "Deep Read" targeted searches to fill missing critical fields (e.g., Owner or Clinical Phase).
 
+
+## 📸 Walkthrough
+
+### 1. Planning Stage
+The system starts by analyzing the query to generate a comprehensive plan and synonym list.
+![Planning Stage](./figs/step1_planning.png)
+
+### 2. Adaptive Discovery Loop
+Workers execute in parallel, visualizing their progress and the growing knowledge graph in real-time.
+![Discovery Loop](./figs/step2_discovery_loop.png)
+
+### 3. Final Verification & Results
+After saturation, the system deduplicates and verifies assets, presenting a final auditable table.
+![Final Results](./figs/step3_final_results.png)
+
 ## 🛠️ Tech Stack & Rationales
 
 | Component | Technology | Rationale |
@@ -31,6 +46,7 @@ The agent follows an iterative, self-correcting cycle:
 | **Extraction** | Crawl4AI + Gemini Flash | Efficient headless browsing combined with schema-based extraction from raw HTML/PDFs. |
 | **LLMs** | Gemini 3 & 2.5 | Reasoning (3-Flash-Preview) for planning/verification; Speed (2.5-Flash-Lite) for extraction. |
 | **Persistence** | SQLAlchemy (Async) | Decoupled domain models from DB logic, allowing seamless switching between SQLite and PostgreSQL. |
+| **Shared State** | Redis | Atomic, high-speed URL and entity tracking to prevent redundant work across parallel workers. |
 
 ## 🚀 Setup
 
